@@ -19,11 +19,11 @@ coord2=$(echo $coords | awk '{split($0,a, ":");print a[2]}' |  awk '{split($0,a,
 
 printf '%s\t%s\t%s\n' $chr $coord2 $coord1 > region_tmp.bed
 
-bedtools getfasta -fi $gr38 -bed region_tmp.bed -fo region.fasta
-minimap2 $ref region.fasta | awk '($12>0)' > minimap.tsv
-newcoord1=$(cut -f8 minimap.tsv | sort -n | head -n 1)
-newcoord2=$(cut -f9 minimap.tsv | sort -n | tail -n 1)
-newchr=$(cut -f6 minimap_coords.tsv | head -n 1)
+bedtools getfasta -fi $gr38 -bed region_tmp.bed -fo region_tmp.fasta
+minimap2 $ref region.fasta | awk '($12>0)' > minimap_tmp.tsv
+newcoord1=$(cut -f8 minimap_tmp.tsv | sort -n | head -n 1)
+newcoord2=$(cut -f9 minimap_tmp.tsv | sort -n | tail -n 1)
+newchr=$(cut -f6 minimap_tmp.tsv | head -n 1)
 
 echo "coordinates in chm13 assebly:" 
 echo $newchr 
@@ -34,4 +34,4 @@ echo "$(($coord1-$coord2))"
 echo "length of chm13 region:"
 echo "$(($newcoord2-$newcoord1))"
 
-#rm *tmp*
+rm *tmp*
