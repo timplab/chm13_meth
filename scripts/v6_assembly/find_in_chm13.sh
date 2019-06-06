@@ -2,7 +2,7 @@
 
 # script takes coordinates from chrX grch38 and outputs that region in chrX jain gm12878 assembly
 
-ref=/kyber/Data/Nanopore/Analysis/gmoney/CHM13/chrX_fixedBionanoSV_centromereV3.fasta
+ref=/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v6_assembly/ref/chrX_fixedBionanoSV_centromereV4_racon_patch139_arrow_arrow.fasta
 gr38=/kyber/Data/Nanopore/Analysis/gmoney/ref/GRCh38.primary_assembly.genome.fa
 
 if [ $# -gt 0 ]; then
