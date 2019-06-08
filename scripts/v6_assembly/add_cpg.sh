@@ -12,10 +12,10 @@ if [ "$1" == "meth" ]; then
 fi
 
 if [ "$1" == "bam" ]; then
-    /home/gmoney/miniconda3/bin/python3 /home/gmoney/repos/nanopore-methylation-utilities/convert_bam_for_methylation.py --verbose -b $bam \
-                -c ${outdir}/methylation.bed.gz -f $ref  > ${outdir}/chrX.methylation.bam #|\
-               # samtools sort -o ${outdir}/chm13_v0.6.nanopolish2.arrow2_10x2.chrX_meth_sorted.bam
-   # samtools index  ${outdir}/chm13_v0.6.nanopolish2.arrow2_10x2.chrX_meth_sorted.bam
+    /home/gmoney/miniconda3/bin/python3 /home/isac/Code/nanopore-methylation-utilities/convert_bam_for_methylation.py --remove_poor --verbose -b $bam \
+                -c ${outdir}/methylation.bed.gz -f $ref |\
+samtools sort -o ${outdir}/chm13_chrX_meth_new.bam
+samtools index  ${outdir}/chm13_chrX_meth_new.bam
 fi
 
 if [ "$1" == "bismark" ]; then
@@ -24,5 +24,6 @@ if [ "$1" == "bismark" ]; then
 fi
 
 if [ "$1" == "bedgraph" ]; then
-	bedtools genomecov -ibam $bam -bg > ${outdir}/chm13_v0.6.nanopolish2.arrow2_10x2.chrX.bg
+#	bedtools genomecov -ibam $bam -bg > ${outdir}/chm13_v0.6.nanopolish2.arrow2_10x2.chrX.bg
+	bedtools genomecov -ibam /kyber/Data/Nanopore/Analysis/gmoney/CHM13/v6_assembly/meth_call/chrX.methylation_sorted.bam -bg > ${outdir}/chm13_meth.chrX.bg
 fi

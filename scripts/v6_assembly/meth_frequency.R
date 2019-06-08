@@ -4,10 +4,10 @@ library(tidyverse)
 library(ggplot2)
 
 
-meth <- read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/methylation_frequency.tsv")
+meth <- read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v6_assembly/meth_call/chrX.methylation_frequency.tsv")
 meth$pos <- rep("chrx", nrow(meth))
-meth[meth$start >= 57812643 & meth$end  <= 60534379 , ][, "pos"] <- "cenx"
-meth[meth$start >=  112000000 & meth$end <= 114000000,][, "pos"] <- "dxz4"
+meth[meth$start >= 57828561 & meth$end  <= 60664792 , ][, "pos"] <- "cenx"
+meth[meth$start >=  113868842 & meth$end <= 114116851,][, "pos"] <- "dxz4"
 
 
 ggplot(data = meth, aes(x = methylated_frequency, fill=meth$pos)) +geom_density(alpha=.5)+facet_wrap(~meth$pos, ncol=1)+theme_bw()+labs(x="methylated frequency (per base)", color="Position")+scale_fill_manual("Region",values=c( "red", "green", "blue"))
@@ -37,7 +37,7 @@ highmeth <- meth %>%
   filter(bin%in%c(highbins)) %>%
   group_by(bin, pos) 
 
-write.table(highmeth, "/home/gmoney/Code/chm13/high_meth_freq.tsv", append = FALSE, sep = "\t", dec = ".",
+write.table(highmeth, "/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v6_assembly/high_meth_freq.tsv", append = FALSE, sep = "\t", dec = ".",
             row.names = FALSE, col.names = TRUE)
 
 lowmeth <- meth %>%
@@ -46,7 +46,7 @@ lowmeth <- meth %>%
   group_by(bin, pos) %>%
   filter(pos == "cenx")
 
-write.table(lowmeth, "/home/gmoney/Code/chm13/low_meth_freq.tsv", append = FALSE, sep = "\t", dec = ".",
+write.table(lowmeth, "/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v6_assembly/low_meth_freq.tsv", append = FALSE, sep = "\t", dec = ".",
             row.names = FALSE, col.names = TRUE)
 
 
