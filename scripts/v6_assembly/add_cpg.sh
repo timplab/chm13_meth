@@ -25,5 +25,5 @@ fi
 
 if [ "$1" == "bedgraph" ]; then
 #	bedtools genomecov -ibam $bam -bg > ${outdir}/chm13_v0.6.nanopolish2.arrow2_10x2.chrX.bg
-	bedtools genomecov -ibam /kyber/Data/Nanopore/Analysis/gmoney/CHM13/v6_assembly/meth_call/chrX.methylation_sorted.bam -bg > ${outdir}/chm13_meth.chrX.bg
+	bedtools genomecov -ibam /kyber/Data/Nanopore/Analysis/gmoney/CHM13/v6_assembly/meth_call/chm13_chrX_meth_new.bam -bg > ${outdir}/chm13_meth.chrX.bg
 fi

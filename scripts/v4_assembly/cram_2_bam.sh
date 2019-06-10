@@ -2,9 +2,9 @@
 
 # for version 4 mapping that came in cram format
 
-ref=/kyber/Data/Nanopore/Analysis/gmoney/CHM13/chm13.draft_v0.4.fasta
+ref=/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v4_assembly/chm13.draft_v0.4.fasta
 cram=/kyber/Data/Nanopore/Analysis/gmoney/CHM13/rel2_to_v0.4.cram
-outdir=/kyber/Data/Nanopore/Analysis/gmoney/CHM13
+outdir=/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v4_assembly
 
 if [ "$1" == "install" ]; then
 	wget https://github.com/samtools/samtools/releases/download/1.9/samtools-1.9.tar.bz2
@@ -43,16 +43,22 @@ if [ "$1" == "bam" ]; then
         samtools index rel2_to_v0.4_DXZ4_meth.bam
 fi
 if [ "$1" == "all" ]; then
-samtools view -b -T $ref $cram "chrX_fixedBionanoSV_centromereV3" > ${outdir}/chrx.bam
-samtools sort ${outdir}/chrx.bam -o ${outdir}/chrx.bam
-samtools index ${outdir}/chrx.bam
-    python3 /home/gmoney/repos/nanopore-methylation-utilities/convert_bam_for_methylation.py --verbose -b  ${outdir}/chrx.bam \
-                -c  ${outdir}/methylation.bed.gz -f $ref -w chrX_fixedBionanoSV_centromereV3:2710-153867331 |\
-                samtools sort -o  ${outdir}/rel2_to_v0.4_chrx_meth.bam
-        samtools index  ${outdir}/rel2_to_v0.4_chrx_meth.bam
+#samtools view -b -T $ref $cram "chrX_fixedBionanoSV_centromereV3" > ${outdir}/chrx.bam
+#samtools sort ${outdir}/chrx.bam -o ${outdir}/chrx.bam
+#samtools index ${outdir}/chrx.bam
+    python3 /home/gmoney/repos/nanopore-methylation-utilities/convert_bam_for_methylation.py --verbose -b ${outdir}/chrx.bam \
+                -c  ${outdir}/methylation.bed.gz -f $ref |\
+                samtools sort -o ${outdir}/rel2_to_v0.4_new_chrx_meth.bam
+        samtools index ${outdir}/rel2_to_v0.4_chrx_new_meth.bam
 fi
 
 if [ "$1" == "bismark" ]; then
 	python3 /home/gmoney/repos/nanopore-methylation-utilities/parseMethylbed.py frequency -i ${outdir}/methylation.bed.gz
 
 fi
+if [ "$1" == "bedgraph" ]; then
+	bedtools genomecov -ibam ${outdir}/chrx.bam -bg > ${outdir}/v4_all.chrX.bg
+	bedtools genomecov -ibam ${outdir}/rel2_to_v0.4_chrx_meth.bam -bg > ${outdir}/v4_meth.chrX.bg
+
+fi
+

@@ -1,9 +1,26 @@
 library(tidyverse)
 v6mcalls <- read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v6_assembly/meth_call/chrX.methylation.tsv")
 
-v6mcalls %>%
-  ggplot(aes(x=log_lik_ratio))+geom_histogram(binwidth=.5)+xlim(25,-25)+annotate("text", x = 10, y = 2000000, label = "average methylation : 29.9%")+annotate("text", x = 10, y = 2100000, label = "called sites vs all sites : 54%")+theme_bw()+labs(title="chm13 v6 assembly chrX")
 
+v6mcalls$pos <- rep("chrx", nrow(v6mcalls))
+v6mcalls[v6mcalls$start >= 57828561 & v6mcalls$end  <= 60664792 , ][, "pos"] <- "cenx"
+v6mcalls[v6mcalls$start >=  113868842 & v6mcalls$end <= 114116851,][, "pos"] <- "dxz4" 
+
+ggplot(data = v6mcalls, aes(x = log_lik_ratio, fill=v6mcalls$pos)) +geom_histogram(binwidth=.5,alpha=.5)+facet_wrap(~v6mcalls$pos, ncol=1, scales = "free")+theme_bw()+scale_fill_manual("Region",values=c( "red", "green", "blue"))+xlim(25,-25)
+
+v6_cen <- v6mcalls %>%
+  filter(pos=="cenx") %>%
+  ggplot(aes(x=log_lik_ratio))+geom_histogram(binwidth=.5)+xlim(25,-25)+theme_bw()+labs(title="chm13 v6 assembly cenx")
+
+v6_dxz4 <-v6mcalls %>%
+  filter(pos=="cenx") %>%
+  ggplot(aes(x=log_lik_ratio))+geom_histogram(binwidth=.5)+xlim(25,-25)+theme_bw()+labs(title="chm13 v6 assembly dxz4")
+
+v6_chrx <- v6mcalls %>%
+  filter(pos=="cenx") %>%
+  ggplot(aes(x=log_lik_ratio))+geom_histogram(binwidth=.5)+xlim(25,-25)+theme_bw()+labs(title="chm13 v6 assembly chrx")
+
+  
 v4mcalls <- read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v4_assembly/methylation.tsv")
 
 v4mcalls %>%
