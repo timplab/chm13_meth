@@ -12,7 +12,7 @@ list.files[3] <- list.files(pattern="bismark")
 list.files[4] <- list.files(pattern="bedgraph")
 roi <- "chrX_fixedBionanoSV_centromereV4_racon_patch139_arrow_arrow:57828561-60664792"
 smoothed <- 500
-wide <- 50000
+wide <- 500000
 
 summary <- list()
 print(list.files)
