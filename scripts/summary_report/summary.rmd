@@ -13,11 +13,13 @@ library(Biostrings)
 library(GenomicRanges)
 library(Rsamtools)
 library(Sushi)
+library(ggplot2)
+library(png)
 
 options(knitr.duplicate.label = 'allow')
 ```
 
-## Methylation report for `r list.files[1]`
+## Methylation report for `r file_list[1]`
 
 ```{r include=FALSE}
 freq <- read_tsv(files$summary[1])
@@ -111,21 +113,27 @@ print(binned <- freq %>%
 BS <- read.bismark(files$summary[3])
 smooth <-BSmooth(BS, 
                  ns=smoothed)
-q <- data.frame(start = coord1, end = coord2, chr = chr)
+cenx <- data.frame(start = coord1, end = coord2, chr = chr)
+#chr8_v0.1_unpolished:44,825,722-44,902,661
+roi <- data.frame(start=44825722,end=44902661, chr="chr8_v0.1_unpolished")
+getmeth <- getMeth(smooth)
+getmeth <- as_tibble(cbind(getmeth, bismark$X2))
+colnames(getmeth) <- c("meth", "coord")
 ```
 
-BSseq plot
+Methylation plot
 
-Cen in red
+flank: $`r wide`$ bp
 
-flank: `r wide`bp
+smooth: $`r smoothed`$ bp
 
-smooth: `r smoothed`bp
-
-
-```{r fig.width=12, fig.height=8}
-plotRegion(smooth,cenx, addRegions=cenx, extend=wide, addTicks = F)
+```{r fig.width=12, fig.height=6}
+print(plot <- getmeth %>% 
+  filter(coord > (coord1-wide)) %>%
+  filter(coord < (coord2+wide)) %>%
+  ggplot(aes(x = (coord/1000), y= meth)) +geom_line()+geom_vline(xintercept = c((coord1/1000), (coord2)/1000), linetype= "dashed", color = "red")+theme_bw()+ labs(x="Genomic coordinates (Kb)", y="Methylation"))
 ```
+
 
 Coverage plot
 
@@ -136,4 +144,29 @@ mtext("Read Depth",side=2,line=1.75,cex=1,font=2)
 axis(side=2,las=2,tcl=.2)
 abline(v=c(coord1,coord2), col="black", lwd=1, lty=2)
 #legend("topright",xpd=T, bty="n", inset=c(-5,0),legend=c("All ONT reads","ONT with high quality meth calls"), fill=opaque(SushiColors(2)(2)),border=SushiColors(2)(2),text.font=2,cex=1.0)
+```
+
+
+```{r fig.width=12, fig.height=6}
+#chr8_v0.1_unpolished:44,825,722-44,902,661
+print(plot <- getmeth %>% 
+  filter(coord > (coord1-wide)) %>%
+  filter(coord < (coord2+wide)) %>%
+  ggplot(aes(x = (coord/1000), y= meth)) +geom_line()+geom_vline(xintercept = c(44825722/1000, 44902661/1000), linetype= "dashed", color = "red")+theme_bw()+ labs(x="Genomic coordinates (Kb)", y="Methylation"))
+```
+
+```{r echo=FALSE,out.width = '100%'}
+knitr::include_graphics("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/chr8/igv/chr8_cen_dip.png")
+```
+
+```{r fig.width=12, fig.height=6}
+#chr8_v0.1_unpolished:43,857,137-43,884,614
+print(plot <- getmeth %>% 
+  filter(coord > (coord1-wide)) %>%
+  filter(coord < (coord2+wide)) %>%
+  ggplot(aes(x = (coord/1000), y= meth)) +geom_line()+geom_vline(xintercept = c(43857137/1000, 43884614/1000), linetype= "dashed", color = "red")+theme_bw()+ labs(x="Genomic coordinates (Kb)", y="Methylation"))
+```
+
+```{r echo=FALSE,out.width = '100%'}
+knitr::include_graphics("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/chr8/igv/chr8_cen_highmeth.png")
 ```
