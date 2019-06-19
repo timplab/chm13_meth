@@ -39,6 +39,7 @@ use whole chromosome as input -c is region of centromere
 ```
 Usage: call_summary.R [options]
 
+
 Options:
         -d DIRECTORY, --directory=DIRECTORY
                 path to directory with bedgraph, methylation tsv, methylation frequency, bismark files
@@ -50,7 +51,7 @@ Options:
                 size of flanking regions
 
         -p NUMBER, --png=NUMBER
-                size of flanking regions
+                path to igv png images
 
         -c CHARACTER, --coordinates=CHARACTER
                 chrx:xx-xx
@@ -63,4 +64,6 @@ Options:
 
         -h, --help
                 Show this help message and exit
+
+
 ```
