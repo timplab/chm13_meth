@@ -147,26 +147,24 @@ abline(v=c(coord1,coord2), col="black", lwd=1, lty=2)
 ```
 
 
-```{r fig.width=12, fig.height=6}
-#chr8_v0.1_unpolished:44,825,722-44,902,661
-print(plot <- getmeth %>% 
-  filter(coord > (coord1-wide)) %>%
-  filter(coord < (coord2+wide)) %>%
-  ggplot(aes(x = (coord/1000), y= meth)) +geom_line()+geom_vline(xintercept = c(44825722/1000, 44902661/1000), linetype= "dashed", color = "red")+theme_bw()+ labs(x="Genomic coordinates (Kb)", y="Methylation"))
+
+```{r echo=FALSE,out.width = '100%',eval=pic}
+# save igv image as png and input path
+knitr::include_graphics(opt$png)
 ```
 
-```{r echo=FALSE,out.width = '100%'}
-knitr::include_graphics("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/chr8/igv/chr8_cen_dip.png")
-```
-
-```{r fig.width=12, fig.height=6}
+```{r fig.width=12, fig.height=6, eval=pic}
+# to zoom in on specific regions delete "eval=FALSE" and input coordinates as geom_vline
 #chr8_v0.1_unpolished:43,857,137-43,884,614
+thischr <- (str_split(opt$roi, ":")[[1]])[1]
+thiscoord1 <- as.numeric(str_split((str_split(opt$roi, ":")[[1]])[2], "-")[[1]][1])
+thiscoord2 <- as.numeric(str_split((str_split(opt$roi, ":")[[1]])[2], "-")[[1]][2])
+
+
 print(plot <- getmeth %>% 
   filter(coord > (coord1-wide)) %>%
   filter(coord < (coord2+wide)) %>%
-  ggplot(aes(x = (coord/1000), y= meth)) +geom_line()+geom_vline(xintercept = c(43857137/1000, 43884614/1000), linetype= "dashed", color = "red")+theme_bw()+ labs(x="Genomic coordinates (Kb)", y="Methylation"))
+  ggplot(aes(x = (coord/1000), y= meth)) +geom_line()+geom_vline(xintercept = c(thiscoord1/1000, thiscoord2/1000), linetype= "dashed", color = "red")+theme_bw()+ labs(x="Genomic coordinates (Kb)", y="Methylation"))
 ```
 
-```{r echo=FALSE,out.width = '100%'}
-knitr::include_graphics("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/chr8/igv/chr8_cen_highmeth.png")
-```
+
