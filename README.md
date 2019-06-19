@@ -33,8 +33,9 @@ keep all these files in one directory
 
 ```
 Rscript call_summary.R -d /path/to/files -c chr8:10-20
-
+```
 use whole chromosome as input -c is region of centromere
+```
 Usage: call_summary.R [options]
 
 Options:
