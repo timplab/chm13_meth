@@ -33,7 +33,7 @@ keep all these files in one directory
 # generating report
 
 ```
-Rscript call_summary.R -d /path/to/files -c chr8:1000000-2000000
+Rscript chm13_meth/summary_report/call_summary.R -d /path/to/files -c chr8:1000000-2000000
 ```
 use whole chromosome as input -c is region of centromere
 ```
