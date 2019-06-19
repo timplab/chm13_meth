@@ -26,7 +26,7 @@ convert_bam_for_methylation.py --remove_poor --verbose -b bam \
 samtools index test_meth.bam
 
  python3 parseMethylbed.py frequency -i methylation.bed.gz > test.bismark
- bedtools genomecov -ibam ${outdir}/test_meth.bam -bg > test_meth.bedgraph
+ bedtools genomecov -ibam test_meth.bam -bg > test_meth.bedgraph
 ```
 keep all these files in one directory
 
