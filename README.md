@@ -1,5 +1,5 @@
 # chm13_meth
-Methylation analysis of chrx in chm13 assembly
+Methylation analysis of centromere vs whole chromosome in chm13 assembly
 
 # dependencies
 knitr
@@ -13,18 +13,19 @@ nanopore-methylation-utilities
 
 # generating input files
 
-use Isac's repo nanopore-methylation-utilities to generate bam, bed, bismark and bedtools to generate bedgraph
+use Isac's repo nanopore-methylation-utilities to generate bam, bed, bismark and bedtools to generate bedgraph for chromosome
 
 ```
-python3 mtsv2bedGraph.py -i ${root}/chr8.methylation.tsv |\
+python3 mtsv2bedGraph.py -i chr8.methylation.tsv |\
                 sort -k1,1 -k2,2n | bgzip > ${outdir}/methylation.bed.gz
 tabix -p bed methylation.bed.gz
 
 convert_bam_for_methylation.py --remove_poor --verbose -b bam \
-                -c ${root}/mcalls/methylation.bed.gz -w "chr8:1-10000" |\ samtools sort -o test_meth.bam
+                -c mcalls/methylation.bed.gz -f ref.fasta |\ 
+                samtools sort -o test_meth.bam
 samtools index test_meth.bam
 
- python3 parseMethylbed.py frequency -i ${outdir}/methylation.bed.gz > test.bismark
+ python3 parseMethylbed.py frequency -i methylation.bed.gz > test.bismark
  bedtools genomecov -ibam ${outdir}/test_meth.bam -bg > test_meth.bedgraph
 ```
 keep all these files in one directory
@@ -32,7 +33,7 @@ keep all these files in one directory
 # generating report
 
 ```
-Rscript call_summary.R -d /path/to/files -c chr8:10-20
+Rscript call_summary.R -d /path/to/files -c chr8:1000000-2000000
 ```
 use whole chromosome as input -c is region of centromere
 ```
