@@ -52,7 +52,7 @@ Options:
                 size of flanking regions
 
         -c CHARACTER, --coordinates=CHARACTER
-                chrx:xx:xx
+                chrx:xx-xx
 
         -o CHARACTER, --ouput=CHARACTER
                 output directory
