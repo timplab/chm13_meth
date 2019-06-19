@@ -15,7 +15,7 @@ nanopore-methylation-utilities
 
 use Isac's repo nanopore-methylation-utilities to generate bam, bed, bismark and bedtools to generate bedgraph
 
-python3 mtsv2bedGraph.py -i ${root}/chr8.methylation.tsv |\
+`python3 mtsv2bedGraph.py -i ${root}/chr8.methylation.tsv |\
                 sort -k1,1 -k2,2n | bgzip > ${outdir}/methylation.bed.gz
 tabix -p bed methylation.bed.gz
 
@@ -24,17 +24,16 @@ convert_bam_for_methylation.py --remove_poor --verbose -b bam \
 samtools index test_meth.bam
 
  python3 parseMethylbed.py frequency -i ${outdir}/methylation.bed.gz > test.bismark
- bedtools genomecov -ibam ${outdir}/test_meth.bam -bg > test_meth.bedgraph
+ bedtools genomecov -ibam ${outdir}/test_meth.bam -bg > test_meth.bedgraph`
 
 keep all these files in one directory
 
 # generating report
 
-Rscript call_summary.R -d /path/to/files -c chr8:10-20
+`Rscript call_summary.R -d /path/to/files -c chr8:10-20
 
 use whole chromosome as input -c is region of centromere
 Usage: call_summary.R [options]
-
 
 Options:
         -d DIRECTORY, --directory=DIRECTORY
@@ -59,4 +58,4 @@ Options:
                 region in the png
 
         -h, --help
-                Show this help message and exit
+                Show this help message and exit`
