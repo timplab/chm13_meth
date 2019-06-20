@@ -12,8 +12,14 @@ Sushi
 nanopore-methylation-utilities
 
 # generating input files
+Call methylation for chromsome
+```
+nanopolish call-methylation -t 8 -r albacore_output.fastq -b albacore_output.sorted.bam -g reference.fasta -w "chr8" > chr8_methylation_calls.tsv
 
-use Isac's repo nanopore-methylation-utilities to generate bam, bed, bismark and bedtools to generate bedgraph for chromosome
+scripts/calculate_methylation_frequency.py -i methylation_calls.tsv > chr8_methylation_frequency.tsv
+
+```
+use Isac's repo nanopore-methylation-utilities to generate bam, bed, bismark and bedtools to generate bedgraph
 
 ```
 python3 mtsv2bedGraph.py -i chr8.methylation.tsv |\
@@ -35,7 +41,7 @@ keep all these files in one directory
 ```
 Rscript chm13_meth/summary_report/call_summary.R -d /path/to/files -c chr8:1000000-2000000
 ```
-use whole chromosome as input -c is region of centromere
+compare centromere methylation to entire chromosome with -c [cetromere region]
 ```
 Usage: call_summary.R [options]
 
