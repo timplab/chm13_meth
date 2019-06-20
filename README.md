@@ -67,3 +67,4 @@ Options:
 
 
 ```
+![example_report](https://github.com/gmoneyomics/chm13_meth/tree/master/plots/chr8.methylation.pdf)
