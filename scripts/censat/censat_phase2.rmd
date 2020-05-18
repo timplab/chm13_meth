@@ -3,7 +3,6 @@ title: "`r params$newtitle`"
 output: pdf_document
 
 ---
-  
 ```{r include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
 library(knitr)
