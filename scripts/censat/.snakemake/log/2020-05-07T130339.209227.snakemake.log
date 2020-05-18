@@ -1,0 +1,9 @@
+Building DAG of jobs...
+candidate job all
+	wildcards: 
+candidate job cov
+	wildcards: sample=/snake_practice/tig00006368/tig00006368
+candidate job bam
+	wildcards: sample=tig00006368
+CyclicGraphException in line 36 of /home/gmoney/Code/chm13/chm13_meth/scripts/censat/run_meth:
+Cyclic dependency on rule bam.

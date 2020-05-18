@@ -10,7 +10,7 @@ meth[meth$start >= 57828561 & meth$end  <= 60664792 , ][, "pos"] <- "cenx"
 meth[meth$start >=  113868842 & meth$end <= 114116851,][, "pos"] <- "dxz4"
 
 
-ggplot(data = meth, aes(x = methylated_frequency, fill=meth$pos)) +geom_density(alpha=.5)+facet_wrap(~meth$pos, ncol=1)+theme_bw()+labs(x="methylated frequency (per base)", color="Position")+scale_fill_manual("Region",values=c( "red", "green", "blue"))
+ggplot(data = meth, aes(x = methylated_frequency, fill=meth$pos)) +geom_density(alpha=.5)+facet_wrap(~meth$pos, ncol=2)+theme_bw()+labs(x="methylated frequency (per base)", color="Position")+scale_fill_manual("Region",values=c( "red", "green", "blue"))
 
 binned <- meth %>%
   mutate(bin = ntile(start, (length(meth$start)/50))) %>%
@@ -18,7 +18,7 @@ binned <- meth %>%
   summarise(avgmeth = mean(methylated_frequency)) %>%
   arrange(desc(avgmeth))
 
-ggplot((data=binned),aes(x=avgmeth, fill = pos))+geom_density(alpha=.5)+theme_bw()+labs(x="Average methylation frequency (bin size 50bps)")+facet_wrap(~pos, ncol=1)+scale_fill_manual("Region",values=c( "red", "green", "blue"))
+ggplot((data=binned),aes(x=avgmeth, fill = pos))+geom_density(alpha=.5)+theme_bw()+labs(x="Average methylation frequency (bin size 50bps)")+facet_wrap(~pos, ncol=2)+scale_fill_manual("Region",values=c( "red", "green", "blue"))
   
 
 high <- binned %>%

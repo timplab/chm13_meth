@@ -19,8 +19,8 @@ coord2=$(echo $coords | awk '{split($0,a, ":");print a[2]}' |  awk '{split($0,a,
 
 printf '%s\t%s\t%s\n' $chr $coord2 $coord1 > region_tmp.bed
 
-bedtools getfasta -fi $gr38 -bed region_tmp.bed -fo region_tmp.fasta
-minimap2 $ref region_tmp.fasta | awk '($12>0)' > minimap_tmp.tsv
+bedtools getfasta -fi $ref -bed region_tmp.bed -fo region_tmp.fasta
+minimap2 region_tmp.fasta $gr38 | awk '($12>0)' > minimap_tmp.tsv
 #chroms=$(cut -f6 minimap_tmp.tsv | uniq)
 
 newcoord1=$(cut -f8 minimap_tmp.tsv | sort -n | head -n 1)

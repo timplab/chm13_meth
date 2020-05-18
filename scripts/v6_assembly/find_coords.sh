@@ -16,4 +16,4 @@
 #./find_in_chm13.sh chrX:155997581-156013017
 
 # high meth region (switched search)
-./find_in_chm13.sh chrX_fixedBionanoSV_centromereV4_racon_patch139_arrow_arrow:153842058-153910699
+./find_in_chm13.sh chrX_fixedBionanoSV_centromereV4_racon_patch139_arrow_arrow:153850058-153920699

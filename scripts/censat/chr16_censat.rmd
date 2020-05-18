@@ -1,0 +1,88 @@
+---
+  title: "CenSat Methylation report"
+output: pdf_document
+
+---
+  
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(GenomicRanges)
+library(Rsamtools)
+library(Sushi)
+library(ggplot2)
+library(png)
+
+options(knitr.duplicate.label = 'allow')
+```
+
+
+
+```{r include=FALSE}
+tig="tig00018101"
+cen1=0
+cen2=4
+
+bismark <- read_tsv(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/chr16/",tig,"/bismark.out"), col_names = F)
+cov <- read_tsv(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/chr16/", tig, "/", tig, "_meth_cov.bg"), col_names = F)
+
+
+```
+
+```{r include = FALSE}
+BS <- read.bismark(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/chr16/",tig,"/bismark.out"))
+
+smoothed=50
+smooth <-BSmooth(BS, 
+                 ns=smoothed)
+
+rawmeth <- getMeth(BS, type = "raw")
+getmeth <- getMeth(smooth)
+getmeth <- as_tibble(cbind(getmeth, bismark$X2))
+
+rawmeth <- as_tibble(cbind(bismark$X1, bismark$X2, rawmeth))
+rawmeth <- add_column(rawmeth, d = "meth", .after = 2)
+
+#write.table(rawmeth, file = paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/chr16/",tig, "/", "raw_meth_calls.linear"), col.names = F, row.names = F, quote = F, sep = "\t")
+colnames(getmeth) <- c("meth", "coord")
+```
+
+Methylation plot
+
+smooth: $`r smoothed`$ bp
+
+```{r fig.width=12, fig.height=6}
+plot <- getmeth %>% 
+  ggplot(aes(x = (coord/1000000), y= meth)) +geom_line()+ labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_bw()+ylim(0,1)#+xlim(cen1,cen2)
+
+```
+
+Coverage plot
+
+```{r fig.width=12, fig.height=6}
+depth <- ggplot(cov, aes(x=X2/1000000, y=X4))+geom_line()+ labs(x="Genomic coordinates (Mb)", y="read depth")+theme_bw()#+xlim(cen1,cen2)
+
+```
+
+```{r fig.width=12, fig.height=6}
+repeats <- read_tsv(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/chr16/",tig,"/",tig,"_forPlot.tsv"), col_names = F)
+
+repeats$X5[grepl("DNA", repeats$X5)] <- "DNA"
+repeats$X5[grepl("LINE", repeats$X5)] <- "LINE"
+repeats$X5[grepl("SINE", repeats$X5)] <- "SINE"
+repeats$X5[grepl("LTR", repeats$X5)] <- "LTR"
+
+
+rep_leg <- ggplot(data=repeats, mapping=aes(xmin=(X2/1000000),xmax=(X3/1000000),ymin=-1,ymax=1 , fill=X5))+
+  geom_rect()  + theme_classic()+theme(legend.position="top") +labs(y="Axis")#+xlim(cen1,cen2) 
+
+require(gridExtra)
+all <- grid.arrange(rep_leg,plot,depth, ncol = 1)
+
+ggsave(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/figures/", tig,"_censat.pdf"), all)
+
+
+```

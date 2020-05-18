@@ -1,0 +1,91 @@
+---
+title: "`r params$newtitle`"
+output: pdf_document
+
+---
+  
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(GenomicRanges)
+library(Rsamtools)
+library(Sushi)
+library(ggplot2)
+library(png)
+
+options(knitr.duplicate.label = 'allow')
+```
+
+
+
+```{r include=FALSE}
+tig=params$tig
+cen1=(params$cen1)-10000
+cen2=(params$cen2)+10000
+
+
+bismark <- read_tsv(params$bismark, col_names = F)
+cov <- read_tsv(params$cov, col_names = F)
+BS <- read.bismark(params$bismark)
+repeats <- read_tsv(params$repeats, col_names = F)
+
+```
+
+```{r include = FALSE}
+smoothed=500
+smooth <-BSmooth(BS, 
+                 ns=smoothed)
+
+rawmeth <- getMeth(BS, type = "raw")
+getmeth <- getMeth(smooth)
+getmeth <- as_tibble(cbind(getmeth, bismark$X2), colnames(c("meth", "coords")))
+
+rawmeth <- as_tibble(cbind(bismark$X1, bismark$X2, rawmeth))
+rawmeth <- add_column(rawmeth, d = "meth", .after = 2)
+
+write.table(rawmeth, file = paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/wig/",tig, ".wig"), col.names = F, row.names = F, quote = F, sep = "\t")
+colnames(getmeth) <- c("meth", "coord")
+```
+
+
+
+Methylation data for:  `r params$tig` :  `r print(params$cen1)`  -  `r print(params$cen2)`
+
+```{r fig.width=12, fig.height=6}
+plot <- getmeth %>% 
+  ggplot(aes(x = (coord), y= meth)) +geom_line()+ labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_bw()+xlim(cen1,cen2)
+
+```
+
+
+```{r fig.width=12, fig.height=6}
+depth <- ggplot(cov, aes(x=X2, y=X4))+geom_line()+ labs(x="Genomic coordinates (Mb)", y="read depth")+theme_bw()+xlim(cen1,cen2)
+
+```
+
+```{r fig.width=12, fig.height=6}
+
+#repeats$X5[grepl("DNA", repeats$X5)] <- "DNA"
+#repeats$X5[grepl("LINE", repeats$X5)] <- "LINE"
+#repeats$X5[grepl("SINE", repeats$X5)] <- "SINE"
+#repeats$X5[grepl("LTR", repeats$X5)] <- "LTR"
+
+repeatColors <- setNames( c('red', 'forestgreen', 'blue'),levels(repeats$X5))
+
+rep_leg <- ggplot(data=repeats, mapping=aes(xmin=(X2),xmax=(X3),ymin=-1,ymax=1 , fill=X5))+
+  geom_rect()  +  theme_void() +theme(legend.position="top") +labs(y="Axis")+xlim(cen1,cen2) +labs(y="Axis")
+
+require(gridExtra)
+all <- grid.arrange(rep_leg,plot, depth, ncol = 1)
+
+
+
+```
+
+
+
+
+

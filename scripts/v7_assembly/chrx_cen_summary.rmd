@@ -1,0 +1,180 @@
+---
+  title: "`r title`"
+output: pdf_document
+
+---
+  
+  ```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(GenomicRanges)
+library(Rsamtools)
+library(Sushi)
+library(ggplot2)
+library(png)
+
+options(knitr.duplicate.label = 'allow')
+```
+
+## Methylation report for `r file_list[1]`
+
+```{r include=FALSE}
+freq <- read_tsv(files$summary[1])
+mcalls <- read_tsv(files$summary[2])
+bismark <- read_tsv(files$summary[3], col_names = F)
+cov <- read_tsv(files$summary[4], col_names = F)
+
+# parse files for the given roi
+chr <- (str_split(roi, ":")[[1]])[1]
+coord1 <- as.numeric(str_split((str_split(roi, ":")[[1]])[2], "-")[[1]][1])
+coord2 <- as.numeric(str_split((str_split(roi, ":")[[1]])[2], "-")[[1]][2])
+
+
+# calculate percent methylated and percent of high quality calls
+
+m <- length(which(mcalls$log_lik_ratio>2.5))
+u <- length(which(mcalls$log_lik_ratio<(-2.5)))
+a <- length(mcalls$log_lik_ratio)
+
+calls <- round((((m+u)/a)*100), digits = 2)
+meth <- round(((m/(m+u))*100), digits=2)
+
+```
+
+
+Methylation Summary stats:
+  
+  Percent high quality calls: `r calls`%  
+Percent methylation: `r meth`%  
+
+
+Histogram of log likelihood ratios
+
+```{r}
+print(ggplot(data = mcalls, aes(x=log_lik_ratio))+geom_histogram(alpha=.5, binwidth = .5, fill = "red")+theme_bw()+geom_vline(xintercept= c(-2.5, 2.5), linetype="dashed", color="black")+xlim(-25,25))
+
+```
+
+
+```{r include = FALSE}
+mcalls_roi <- mcalls %>% 
+  filter(chromosome == chr) %>%
+  filter(start >= coord1) %>%
+  filter(end <= coord2)
+
+m <- length(which(mcalls_roi$log_lik_ratio>2.5))
+u <- length(which(mcalls_roi$log_lik_ratio<(-2.5)))
+a <- length(mcalls_roi$log_lik_ratio)
+
+calls <- round((((m+u)/a)*100), digits = 2)
+meth <- round(((m/(m+u))*100), digits=2)
+```
+\newpage
+Methylation Summary stats for `r roi`:
+  
+  Percent high quality calls: `r calls`%  
+Percent methylation: `r meth`%  
+
+Histogram of log likelihood ratios in `r roi`
+
+
+``` {r}
+print(ggplot(data = mcalls_roi, aes(x=log_lik_ratio))+geom_histogram(alpha=.5, binwidth = .5, fill = "red")+theme_bw()+geom_vline(xintercept= c(-2.5, 2.5), linetype="dashed", color="black")+xlim(-25,25))
+
+```
+\newpage
+Methylation frequency per base
+
+```{r include = FALSE}
+freq$pos <- rep("chrom", nrow(freq))
+freq[freq$start >= coord1 & freq$end  <= coord2 , ][, "pos"] <- "cen"
+```
+``` {r}
+print(ggplot(data = freq, aes(x = methylated_frequency, fill=freq$pos)) +geom_density(alpha=.5)+facet_wrap(~freq$pos, ncol=2)+theme_bw()+labs(x="methylated frequency (per base)", color="Position")+scale_fill_manual("region",values=c( "red", "green"))+theme(legend.position="bottom"))
+
+```
+\newpage
+Methylation frequency 50bp bins
+
+``` {r}
+print(binned <- freq %>%
+        mutate(bin = ntile(start, (length(freq$start)/50))) %>%
+        group_by(bin, pos) %>%
+        summarise(avgmeth = mean(methylated_frequency)) %>%
+        arrange(desc(avgmeth)) %>% ggplot(aes(x=avgmeth, fill = pos))+geom_density(alpha=.5)+theme_bw()+labs(x="Average methylation frequency (bin size 50bps)")+facet_wrap(~pos, ncol=2)+scale_fill_manual("Region",values=c( "red", "green"))+theme(legend.position="bottom"))
+```
+
+\newpage
+
+```{r include = FALSE}
+BS <- read.bismark(files$summary[3])
+smooth <-BSmooth(BS, 
+                 ns=smoothed)
+cenx <- data.frame(start = coord1, end = coord2, chr = chr)
+#chr8_v0.1_unpolished:44,825,722-44,902,661
+#roi <- data.frame(start=44825722,end=44902661, chr="chr8_v0.1_unpolished")
+getmeth <- getMeth(smooth)
+getmeth <- as_tibble(cbind(getmeth, bismark$X2))
+colnames(getmeth) <- c("meth", "coord")
+```
+
+Methylation plot
+
+flank: $`r wide`$ bp
+
+smooth: $`r smoothed`$ bp
+
+```{r fig.width=12, fig.height=6}
+plot <- getmeth %>% 
+  filter(coord > (coord1-wide)) %>%
+  filter(coord < (coord2+wide)) %>%
+  ggplot(aes(x = (coord/1000), y= meth)) +geom_line()+ labs(x="Genomic coordinates (Kb)", y="Methylation")+theme_bw() + geom_vline(xintercept = c(153850058/1000, 153920699/1000), linetype= "dashed", color = "red")
+
+ggsave(filename = "qsubtel.pdf", plot = plot, width = 12, height = 6)
+#geom_vline(xintercept = c((coord1/1000), (coord2)/1000), linetype= "dashed", color = "red")
+```
+
+
+Coverage plot
+
+```{r fig.width=12, fig.height=6}
+pdf(file = "par1_cov.pdf",
+    width =15,
+    height = 8)
+
+plotBedgraph((as.data.frame(cov)),chr,(coord1-wide),(coord2+wide), transparency =.5, color= SushiColors(2)(2)[1])
+labelgenome("par1",coord1,coord2,n=3,scale="Kb")
+mtext("Read Depth",side=2,line=1.75,cex=1,font=2)
+axis(side=2,las=2,tcl=.2)
+
+dev.off()
+#abline(v=c(coord1,coord2), col="black", lwd=1, lty=2)
+
+#legend("topright",xpd=T, bty="n", inset=c(-5,0),legend=c("All ONT reads","ONT with high quality meth calls"), fill=opaque(SushiColors(2)(2)),border=SushiColors(2)(2),text.font=2,cex=1.0)
+```
+
+
+
+```{r echo=FALSE,out.width = '100%',eval=pic}
+# save igv image as png and input path
+knitr::include_graphics(opt$png)
+```
+
+```{r fig.width=12, fig.height=6, eval=pic}
+# to zoom in on specific regions delete "eval=FALSE" and input coordinates as geom_vline
+#chr8_v0.1_unpolished:43,857,137-43,884,614
+thischr <- (str_split(opt$roi, ":")[[1]])[1]
+thiscoord1 <- as.numeric(str_split((str_split(opt$roi, ":")[[1]])[2], "-")[[1]][1])
+thiscoord2 <- as.numeric(str_split((str_split(opt$roi, ":")[[1]])[2], "-")[[1]][2])
+
+
+print(plot <- getmeth %>% 
+        filter(coord > (coord1-wide)) %>%
+        filter(coord < (coord2+wide)) %>%
+        ggplot(aes(x = (coord/1000), y= meth)) +geom_line()+geom_vline(xintercept = c(thiscoord1/1000, thiscoord2/1000), linetype= "dashed", color = "red")+theme_bw()+ labs(x="Genomic coordinates (Kb)", y="Methylation"))
+```
+
+

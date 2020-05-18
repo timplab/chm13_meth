@@ -1,0 +1,3 @@
+Building DAG of jobs...
+CyclicGraphException in line 36 of /home/gmoney/Code/chm13/chm13_meth/scripts/censat/run_meth:
+Cyclic dependency on rule meth_bam.

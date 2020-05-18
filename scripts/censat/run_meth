@@ -1,0 +1,73 @@
+#!/home/roham/miniconda3/bin/snakemake --snakefile
+import os
+"""
+This Snakemake pipeline takes a directories of bam files and calls methylation with nanopolish, generates methylation bams, methylation wigs, and BSmooth methylation profiles:
+"""
+###-------input paths/files-------###
+bam_path = "/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2"
+base_out_path = "/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/snake_practice/" # the base directory of outputs, directories will be created inside this directory
+ref = "/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_1/meth_calls/reference/chm13_20k_hicanu_hifi.fasta"
+###--------------###
+###------- Extract sample names from fsatq directory -------###
+
+SAMPLES = [f.split(".")[0] for f in os.listdir(bam_path) if f.startswith('tig')]
+print(str(len(SAMPLES)) + "contigs will be processed!")
+print(SAMPLES)
+# print(str(SAMPLES))
+# ###--------------###
+# ###------- Pipeline Rules -------#####
+rule all:
+    input:
+        expand( base_out_path + "{sample}/{sample}_cov.bg", sample=SAMPLES)
+
+rule bam:
+     input:
+         expand( base_out_path + "{sample}/{sample}_meth.bam", sample=SAMPLES),
+         bam = bam_path + "{sample}/{sample}.bam",
+     output:
+         meth_bam = base_out_path + "{sample}/{sample}_meth.bam",
+     params:
+         threads = 50,
+     message: """make methylation bam"""
+     shell:"""
+          /home/gmoney/miniconda3/bin/python3 /home/isac/Code/nanopore-methylation-utilities/convert_bam_for_methylation.py -t {threads} --remove_poor --verbose -b {input.bam} \
+		  -c {meth_bed.out} -f {ref} | \
+		  samtools sort -o {output.meth_bam}
+	  samtools index {output.meth_bam}
+	  """
+rule meth_bed:
+    input:
+    	expand( base_out_path + "{sample}/{sample}_methylation.bed.gz", sample=SAMPLES),
+    output:
+        out =  base_out_path + "{sample}/{sample}_methylation.bed.gz",
+
+    params:
+        file = bam_path + "{sample}/methylation_calls.tsv", 
+
+    message: """Generate methylation bed"""
+    shell:"""
+        python3 /home/gmoney/repos/nanopore-methylation-utilities/mtsv2bedGraph.py -i {input.file} -g {ref} | sort -k1,1 -k2,2n | bgzip > {out}
+        """
+
+         
+rule bismark:
+     input:
+        expand( base_out_path + "{sample}/{sample}_bismark.out", sample=SAMPLES),
+        meth_bam = bam_path + "{sample}_meth.bam",
+     output:
+        bis =  bam_path + "{sample}_bismark.out",
+     message: """ make bismark """
+     shell:"""
+        python3 /home/gmoney/repos/nanopore-methylation-utilities/parseMethylbed.py frequency -i {meth_bed.out} > {bis}
+	"""
+
+rule cov:
+    input:
+      meth_bam = bam_path + "{sample}_meth.bam",
+    output:
+      cov =  bam_path + "{sample}_cov.bg",
+    message: """ coverage file """
+    shell:"""
+        bedtools genomecov -ibam {meth_bam} -bg > {cov}
+        """
+###--------------###

@@ -1,0 +1,139 @@
+---
+  title: "CenSat Methylation report"
+output: pdf_document
+
+---
+  
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(GenomicRanges)
+library(Rsamtools)
+library(Sushi)
+library(ggplot2)
+library(png)
+
+options(knitr.duplicate.label = 'allow')
+```
+
+
+
+```{r include=FALSE}
+tig="tig00000794"
+cen1=44.5
+cen2=52
+
+bismark <- read_tsv(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/",tig,"/bismark.out"), col_names = F)
+cov <- read_tsv(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/", tig, "/", tig, "_meth_cov.bg"), col_names = F)
+
+#  HOR <- read_delim(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/", tig, "/hmm.out"), delim = " ", #col_names = F) %>%
+#  dplyr::select(c("X1", "X10", "X11", "X16")) %>%
+#  rename("start" = X10, "end" = X11, "per_id" = X16, "num" = X1) %>%
+#  mutate(start = as.numeric(start)+90174686, end = as.numeric(end)+90174686)
+#
+```
+
+```{r include = FALSE}
+BS <- read.bismark(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/",tig,"/bismark.out"))
+
+#smoothed=500
+#smooth <-BSmooth(BS, 
+#                 ns=smoothed)
+
+rawmeth <- getMeth(BS, type = "raw")
+getmeth <- getMeth(smooth)
+getmeth <- as_tibble(cbind(getmeth, bismark$X2))
+
+rawmeth <- as_tibble(cbind(bismark$X1, bismark$X2, rawmeth))
+rawmeth <- add_column(rawmeth, d = "meth", .after = 2)
+
+write.table(rawmeth, file = paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/",tig, "/", "raw_meth_calls.linear"), col.names = F, row.names = F, quote = F, sep = "\t")
+colnames(getmeth) <- c("meth", "coord")
+```
+
+Methylation plot
+
+smooth: $`r smoothed`$ bp
+
+```{r fig.width=12, fig.height=6}
+plot <- getmeth %>% 
+  ggplot(aes(x = (coord/1000000), y= meth)) +geom_line()+ labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_bw()+xlim(cen1,cen2)
+
+#+ geom_vline(xintercept = c(153850058/1000, 153920699/1000), linetype= "dashed", color = "red")
+
+#ggsave(filename = "qsubtel.pdf", plot = plot, width = 12, height = 6)
+#geom_vline(xintercept = c((coord1/1000), (coord2)/1000), linetype= "dashed", color = "red")
+```
+
+Coverage plot
+
+```{r fig.width=12, fig.height=6}
+depth <- ggplot(cov, aes(x=X2/1000000, y=X4))+geom_line()+ labs(x="Genomic coordinates (Mb)", y="read depth")+theme_bw()+xlim(cen1,cen2)
+
+```
+
+```{r fig.width=12, fig.height=6}
+repeats <- read_tsv(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/",tig,"/",tig,"_forPlot.tsv"), col_names = F)
+
+repeats$X5[grepl("DNA", repeats$X5)] <- "DNA"
+repeats$X5[grepl("LINE", repeats$X5)] <- "LINE"
+repeats$X5[grepl("SINE", repeats$X5)] <- "SINE"
+repeats$X5[grepl("LTR", repeats$X5)] <- "LTR"
+
+
+rep_leg <- ggplot(data=repeats, mapping=aes(xmin=(X2/1000000),xmax=(X3/1000000),ymin=-1,ymax=1 , fill=X5))+
+  geom_rect()  + theme_classic()+theme(legend.position="top") +labs(y="Axis")+xlim(cen1,cen2) +labs(y="Axis")
+
+require(gridExtra)
+all <- grid.arrange(rep_leg,plot, depth, ncol = 1)
+
+ggsave(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/figures/", tig,"_censat.pdf"), all)
+
+
+```
+
+```{r include=F}
+#rawmeth <- getMeth(BS, type = "raw")
+#rawmeth <- as_tibble(cbind(rawmeth, bismark$X2))
+#colnames(rawmeth) <- c("meth", "coord")
+#num=levels(as.factor(HOR$num))
+#
+#
+#meth_meta <-data.frame()
+#
+#for (i in 1:length(HOR$num)){
+#  print(HOR$num[i])
+#  filt <- HOR %>%
+#   filter(num == num[i])
+#
+#  meth_repeats <- rawmeth %>%
+#  mutate(num = map_chr(
+#    .x = as.numeric(coord),
+#    .f = ~ if_else(
+#      condition = any(.x >= filt$start & .x <= filt$end),
+#      true = num[i],
+#      false = NA_character_
+#    )
+#  )) %>%
+#    filter(!is.na(num))
+#
+#  meth_meta <- rbind(meth_meta, meth_repeats)
+#}
+#
+##meth_meta$num <- meth_meta$found
+#HOR$num <- as.factor(HOR$num)
+#
+#HOR_meta <- merge(HOR, meth_meta, by = "num") %>%
+#  mutate(pos = coord - start)
+#
+#write.table(HOR_meta,file="/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/tig00000514/HOR_meth.tsv", quote = F, #col.names = F, row.names = F, sep = "\t")
+
+
+```
+
+
+
+
