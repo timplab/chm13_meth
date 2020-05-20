@@ -9,12 +9,10 @@ library(knitr)
 library(tidyverse)
 library(bsseq)
 library(Biostrings)
-library(GenomicRanges)
-library(Rsamtools)
-library(Sushi)
 library(ggplot2)
 library(png)
-
+library(cowplot)
+options(scipen=999)
 options(knitr.duplicate.label = 'allow')
 ```
 
@@ -22,9 +20,20 @@ options(knitr.duplicate.label = 'allow')
 
 ```{r include=FALSE}
 tig=params$tig
-cen1=(params$cen1)-10000
-cen2=(params$cen2)+10000
+size <- read_tsv(params$size, col_names = F)
+size = size$X2
 
+if (params$cen1 >= 10000){
+  cen1=(params$cen1)-10000
+}else{
+    cen1=params$cen1
+}
+
+if ((params$cen2+10000) >= size){
+  cen2=(params$cen2)
+}else{
+    cen2=params$cen2+10000
+  }
 
 bismark <- read_tsv(params$bismark, col_names = F)
 cov <- read_tsv(params$cov, col_names = F)
@@ -34,14 +43,15 @@ BS <- read.bismark(params$bismark)
 
 
 repeats <- read_tsv(params$repeats, col_names = F) %>%
+  mutate(X2 = (X2-1)) %>%
   separate(X5, c("class", "family"), sep =  "/") %>%
   mutate("family" = replace_na(family, "Unknown")) %>%
   rename(X4 = "repeat_type") %>%
   mutate(name = ifelse(family == c("centr"), paste0(class,"/",family),class)) %>%
   mutate(name = ifelse(family == c("telo"), paste0(class,"/",family),name)) %>%
   mutate(name = ifelse(family == c("acro"), paste0(class,"/",family),name)) %>%
-  mutate(name = ifelse(family == c("Unkown") & class == c("Satellite"), paste0(class,"/",family),name)) %>%
-  mutate(name = ifelse(repeat_type == c("CER", "(CATTC)n", "(GAATC)n"), repeat_type, name)) %>%
+  mutate(name = ifelse(family == c("subtelo"), paste0(class,"/",family),name)) %>%
+  mutate(name = ifelse(name == c("Satellite"), repeat_type,name)) %>%
   mutate(name = ifelse(name == "Satellite/centr", repeat_type, name)) %>%
   mutate(name = ifelse(name == "DNA?", "DNA", name)) %>%
   mutate(name = ifelse(grepl("GSAT", repeat_type), "GSAT", name)) %>%
@@ -50,14 +60,20 @@ repeats <- read_tsv(params$repeats, col_names = F) %>%
   mutate(name = ifelse(class == c("RC"), paste0(class,"/",family),name)) %>%
   mutate(name = as.factor(name))
 
-#repeats$name = gsub("\\?.*", "", repeats$name)
-
-#repeats <- read_tsv("~/chm13_meth/scripts/censat/tig00000514.fasta_rm.bed", col_names = F) %>%
-#  mutate(X7 = as.factor(X7))
 ```
 
 ```{r include = FALSE}
-smoothed=500
+
+if (cen2-cen1 <= 50000){
+  smoothed=10
+}else if (cen2-cen1 <= 100000){
+    smoothed=50
+}else{
+  smoothed = 500
+}
+
+
+
 smooth <-BSmooth(BS, 
                  ns=smoothed)
 
@@ -74,21 +90,24 @@ colnames(getmeth) <- c("meth", "coord")
 
 
 
-Methylation data for:  `r params$tig` :  `r print(params$cen1)`  -  `r print(params$cen2)`
+Methylation data for:  `r params$tig`:
+`r params$cen1`-
+`r params$cen2`
 
+Methylation smooth: `r smoothed` nucleotides
 ```{r fig.width=12, fig.height=6}
 plot <- getmeth %>% 
-  ggplot(aes(x = (coord), y= meth)) +geom_line()+ labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_bw()+xlim(cen1,cen2)
+  ggplot(aes(x = (coord), y= meth)) +geom_line()+ labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_bw(base_size = 25)+xlim(cen1,cen2)
 
 ```
 
 
 ```{r fig.width=12, fig.height=6}
-depth <- ggplot(cov, aes(x=X2, y=X4))+geom_line()+ labs(x="Genomic coordinates (Mb)", y="read depth")+theme_bw()+xlim(cen1,cen2)
+depth <- ggplot(cov, aes(x=X2, y=X4))+geom_line()+ labs(x="Genomic coordinates (Mb)", y="read depth")+theme_bw(base_size = 25)+xlim(cen1,cen2)
 
 ```
 
-```{r fig.width=12, fig.height=6}
+```{r fig.width=12, fig.height=10}
 
 
 
@@ -118,10 +137,13 @@ repeatColors =c("(CATTC)n" = "#E87C71",
     "SINE"="#9A8AC1",
     "snRNA"="#A885BC",
     "srpRNA"="#B67EB6",
-    "SSTI"="#C378B2",
-    "SUBTEL2_sat"="#D173AF",
+    "SST1"="#C378B2",
+    "Satellite/subtelo"="#D173AF",
     "tRNA"="#ED72A5",
-    "Unknown"="#EF768C")
+    "Unknown"="#EF768C", 
+    "(GAATG)n"="#ff4000",
+    "D20S16" = "#ffbf00", 
+   "SATR2"= "#0080ff" )
 
 defaultColor = "#000080"
 
@@ -131,11 +153,10 @@ defaultColor = "#000080"
 
 
 rep_leg <- ggplot(data=repeats, mapping=aes(xmin=(X2),xmax=(X3),ymin=-1,ymax=1, fill = name))+
-  geom_rect()  +  theme_void() +theme(legend.position="top") +labs(y="Axis")+xlim(cen1,cen2) +labs(y="Axis") + scale_fill_manual(values = repeatColors, drop = FALSE)
+  geom_rect()  +  theme_void() +theme(legend.position="top") +labs(y="Axis")+xlim(cen1,cen2) +labs(y="Axis") + scale_fill_manual(values = repeatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank())
 
-require(gridExtra)
-all <- grid.arrange(rep_leg,plot, depth, ncol = 1)
 
+plot_grid(rep_leg,plot, depth, ncol = 1, align="v")
 
 ```
 

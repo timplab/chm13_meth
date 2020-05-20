@@ -7,6 +7,7 @@ library(rmarkdown)
 suppressMessages(library(tidyverse))
 library(optparse)
 
+
 option_list = list(
   make_option(c("-d", "--directory"), type = "character", default = NULL, 
               help = "top level directory where contig directories located"),
@@ -57,19 +58,23 @@ coords= read_tsv(opt$coords)
     tig = coords$hicanu_ctg[i]
     start = coords$ctg_s[i]
     end = coords$ctg_e[i]
-    title = coords$name[i]
+    title = paste0(coords$hicanu_ctg[i],"_",coords$name[i])
     
     params = list(tig = tig, 
                   bismark = paste(opt$directory,"/", tig, "/bismark.out",sep = ''), 
                   cov = paste(opt$directory,"/", tig, "/", tig, "_meth_cov.bg",sep = ''), 
                   repeats = paste(opt$directory,"/", tig, "/", tig, "_forPlot.tsv",sep = ''),
+                  size = paste(opt$directory,"/", tig, "/","contig_sizes.tsv",sep = ''),
                   newtitle = title, 
                   cen1 = start,
                   cen2 = end)
     
-    rmarkdown::render("/home/gmoney/Code/chm13/chm13_meth/scripts/censat/censat_phase2.rmd",
+    rmarkdown::render("/home/gmoney/chm13_meth/scripts/censat/censat_phase2.rmd",
                       output_format = "pdf_document",
                       output_file = paste(title, ".pdf", sep = ''),
                       output_dir = opt$out)
   }
   
+#file = list.files(opt$out, full.names = TRUE)
+
+#staple_pdf(input_files = file, output_filepath = paste0("phase2_merged.pdf"), overwrite = F)
