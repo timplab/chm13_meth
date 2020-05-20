@@ -6,6 +6,7 @@ library(markdown)
 library(rmarkdown)
 suppressMessages(library(tidyverse))
 library(optparse)
+library(staplr)
 
 
 option_list = list(
@@ -74,7 +75,3 @@ coords= read_tsv(opt$coords)
                       output_file = paste(title, ".pdf", sep = ''),
                       output_dir = opt$out)
   }
-  
-#file = list.files(opt$out, full.names = TRUE)
-
-#staple_pdf(input_files = file, output_filepath = paste0("phase2_merged.pdf"), overwrite = F)
