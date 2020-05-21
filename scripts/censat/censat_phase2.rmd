@@ -87,6 +87,14 @@ rawmeth <- add_column(rawmeth, d = "meth", .after = 2)
 
 write.table(rawmeth, file = paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/wig/",tig, ".wig"), col.names = F, row.names = F, quote = F, sep = "\t")
 colnames(getmeth) <- c("meth", "coord")
+
+cpgs <- getmeth %>%
+  filter(coord >= cen1) %>%
+  filter(coord <= cen2)
+
+total_cpg <- length(cpgs$coord)
+
+
 ```
 
 
@@ -96,6 +104,11 @@ Methylation data for:  `r params$tig`:
 `r params$cen2`
 
 Methylation smooth: `r smoothed` nucleotides
+
+`r total_cpg` CpG sites in `r cen2-cen1` nucleotides
+
+`r total_cpg/((cen2-cen1)/1000)` CpGs per 1Kb 
+
 ```{r fig.width=12, fig.height=6}
 plot <- getmeth %>% 
   ggplot(aes(x = (coord), y= meth)) +geom_line()+ labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_bw(base_size = 25)+xlim(cen1,cen2)
