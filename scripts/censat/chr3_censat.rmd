@@ -22,19 +22,17 @@ options(knitr.duplicate.label = 'allow')
 
 
 ```{r include=FALSE}
+tig="tig00000514"
+path="/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/"
+bismark <- read_tsv(paste0(path, tig, "/bismark.out"), col_names = F)
+cov <- read_tsv(paste0(path, tig, "/" ,tig, "_meth_cov.bg"), col_names = F)
 
-bismark <- read_tsv("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/tig00000514/bismark.out", col_names = F)
-cov <- read_tsv("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/tig00000514/tig00000514_meth_cov.bg", col_names = F)
 
-HOR <- read_delim("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/tig00000514/hmm.out", delim = " ", col_names = F) %>%
-  dplyr::select(c("X1", "X10", "X11", "X16")) %>%
-  rename("start" = X10, "end" = X11, "per_id" = X16, "num" = X1) %>%
-  mutate(start = as.numeric(start)+90174686, end = as.numeric(end)+90174686)
 
 ```
 
 ```{r include = FALSE}
-BS <- read.bismark("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/meth_calls/tig00000514/bismark.out")
+BS <- read.bismark(paste0(path, tig, "/bismark.out"))
 
 smoothed=500
 smooth <-BSmooth(BS, 
@@ -55,12 +53,13 @@ smooth: $`r smoothed`$ bp
 
 ```{r fig.width=12, fig.height=6}
 plot <- getmeth %>% 
-  ggplot(aes(x = (coord/1000000), y= meth)) +geom_line()+ labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_bw()+xlim(90,97.5)
+  ggplot(aes(x = (coord/1000000), y= meth)) +geom_line()+ labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_bw()+xlim(92,92.5)
+plot
 
-#+ geom_vline(xintercept = c(153850058/1000, 153920699/1000), linetype= "dashed", color = "red")
-
-#ggsave(filename = "qsubtel.pdf", plot = plot, width = 12, height = 6)
-#geom_vline(xintercept = c((coord1/1000), (coord2)/1000), linetype= "dashed", color = "red")
+filt <- getmeth %>%
+  filter(coord > 92000000) %>%
+  filter(coord < 92500000) %>%
+  filter(meth < .25)
 ```
 
 Coverage plot

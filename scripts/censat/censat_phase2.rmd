@@ -85,7 +85,7 @@ getmeth <- as_tibble(cbind(getmeth, bismark$X2), colnames(c("meth", "coords")))
 rawmeth <- as_tibble(cbind(bismark$X1, bismark$X2, rawmeth))
 rawmeth <- add_column(rawmeth, d = "meth", .after = 2)
 
-write.table(rawmeth, file = paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/wig/",tig, ".wig"), col.names = F, row.names = F, quote = F, sep = "\t")
+#write.table(rawmeth, file = paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/wig/",tig, ".wig"), col.names = F, row.names = F, quote = F, sep = "\t")
 colnames(getmeth) <- c("meth", "coord")
 
 cpgs <- getmeth %>%
@@ -120,6 +120,8 @@ plot <- getmeth %>%
 depth <- ggplot(cov, aes(x=X2, y=X4))+geom_line()+ labs(x="Genomic coordinates (Mb)", y="read depth")+theme_bw(base_size = 25)+xlim(cen1,cen2)
 
 ```
+
+
 
 ```{r fig.width=12, fig.height=10}
 

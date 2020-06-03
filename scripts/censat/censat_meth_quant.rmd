@@ -1,0 +1,177 @@
+---
+title: "censat_meth_quant.rmd"
+author: "gmoney$$"
+date: "6/1/2020"
+output: pdf_document
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+options(knitr.duplicate.label = 'allow')
+```
+
+
+```{r include=FALSE}
+tig=tig00007806
+bismark <- read_tsv(params$bismark, col_names = F)
+
+BS <- read.bismark(params$bismark)
+```
+
+```{r include = FALSE}
+
+library(GenomicRanges)
+library(regioneR)
+regions <- read_tsv("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/censat_chr16_annotations.tsv") 
+regions_gr <- toGRanges("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/censat_chr16_annotations.tsv")
+regions_gr <- split(regions_gr, f = regions_gr$name)
+
+```
+
+
+```{r}
+
+tig="tig00000514"
+bismark <- read_tsv(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/", tig, "/bismark.out"), col_names = F)
+
+BS <- read.bismark(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/", tig, "/bismark.out"))
+
+
+rawmeth <- getMeth(BS, type = "raw")
+
+rawmeth <- as_tibble(cbind(bismark$X1, as.numeric(bismark$X2),as.numeric(bismark$X2)+1, rawmeth))
+#rawmeth <- add_column(rawmeth, d = "meth", .after = 2)
+
+colnames(rawmeth) <- c("chr", "start", "end", "meth")
+rawmeth <- as.data.frame(rawmeth)
+rawmeth$start <- as.numeric(rawmeth$start)
+rawmeth$end <- as.numeric(rawmeth$end)
+meth_gr <- toGRanges(rawmeth)
+
+regs <- 
+library(GenomicRanges)
+library(regioneR)
+
+ovl <-findOverlaps(meth_gr,regions_gr$mon3_1)
+overlaps1 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "mon3_1")
+
+ovl <-findOverlaps(meth_gr,regions_gr$cen3_2_S1C3H2)
+overlaps2 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "cen3_2_S1C3H2")
+
+ovl <-findOverlaps(meth_gr,regions_gr$cen3_1_S1C3H1L)
+overlaps3 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "cen3_1_S1C3H1L")
+
+ovl <-findOverlaps(meth_gr,regions_gr$ct3_1)
+overlaps4 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "ct3_1")
+
+
+ovl <-findOverlaps(meth_gr,regions_gr$cen3_1_S1C3H1L)
+overlaps5 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "cen3_1_S1C3H1L")
+
+
+ovl <-findOverlaps(meth_gr,regions_gr$mon3_2)
+overlaps6 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "mon3_2")
+
+ovl <-findOverlaps(meth_gr,regions_gr$hsat3_1)
+overlaps7 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "hsat3_1")
+
+
+ovl <-findOverlaps(meth_gr,regions_gr$hsat3_2)
+overlaps8 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "hsat3_2")
+
+ovl <-findOverlaps(meth_gr,regions_gr$bsat3_1)
+overlaps9 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "bsat3_1")
+
+ovl <-findOverlaps(meth_gr,regions_gr$hsat3_3)
+overlaps10 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "hsat3_3")
+
+ovl <-findOverlaps(meth_gr,regions_gr$ct3_2)
+overlaps11 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "ct3_2")
+
+
+ovl <-findOverlaps(meth_gr,regions_gr$cenSat3_1)
+overlaps12 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "cenSat3_1")
+
+ovl <-findOverlaps(meth_gr,regions_gr$cen3_1_S1C3H1L)
+overlaps13 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "cen3_1_S1C3H1L")
+
+ovl <-findOverlaps(meth_gr,regions_gr$mon3_3)
+overlaps14 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "mon3_3")
+
+overlaps <- rbind(overlaps1, overlaps2, overlaps3, overlaps4, overlaps5, overlaps6, overlaps7, overlaps8, overlaps9, overlaps10, overlaps11, overlaps12, overlaps13, overlaps14)
+
+overlaps$meth <- as.numeric(overlaps$meth)
+ggplot(overlaps, aes(y = meth, regidx, fill = regidx))+geom_violin(alpha = .5)
+
+
+
+
+```
+
+
+
+```{r}
+
+tig="tig00018105"
+bismark <- read_tsv(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/", tig, "/bismark.out"), col_names = F)
+
+BS <- read.bismark(paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/", tig, "/bismark.out"))
+
+
+rawmeth <- getMeth(BS, type = "raw")
+
+rawmeth <- as_tibble(cbind(bismark$X1, as.numeric(bismark$X2),as.numeric(bismark$X2)+1, rawmeth))
+#rawmeth <- add_column(rawmeth, d = "meth", .after = 2)
+
+colnames(rawmeth) <- c("chr", "start", "end", "meth")
+rawmeth <- as.data.frame(rawmeth)
+rawmeth$start <- as.numeric(rawmeth$start)
+rawmeth$end <- as.numeric(rawmeth$end)
+meth_gr <- toGRanges(rawmeth)
+
+
+library(GenomicRanges)
+library(regioneR)
+
+regs <- regions$name
+
+ovl <-findOverlaps(meth_gr,regions_gr$hsat16)
+overlaps1 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "hsat16")
+
+ovl <-findOverlaps(meth_gr,regions_gr$ct16)
+overlaps2 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "ct16")
+
+ovl <-findOverlaps(meth_gr,regions_gr$mon16)
+overlaps3 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "mon16")
+
+
+ovl <-findOverlaps(meth_gr,regions_gr$cen16_2_S2C16pH2_A)
+overlaps4 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "cen16_2_S2C16pH2_A")
+
+ovl <-findOverlaps(meth_gr,regions_gr$cen16_1_S1C16H1L)
+overlaps5 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "cen16_1_S1C16H1L")
+
+ovl <-findOverlaps(meth_gr,regions_gr$cen16_3_S2C16pH2_B)
+overlaps6 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "cen16_3_S2C16pH2_B")
+
+ovl <-findOverlaps(meth_gr,regions_gr$cenSat16)
+overlaps7 <- rawmeth[queryHits(ovl),] %>% mutate(regidx = "cenSat16")
+
+
+overlaps <- rbind(overlaps1, overlaps2, overlaps3, overlaps4, overlaps5, overlaps6, overlaps7)
+
+overlaps$meth <- as.numeric(overlaps$meth)
+ggplot(overlaps, aes(y = meth, regidx, fill = regidx))+geom_violin(alpha = .5)
+
+ggsave("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/chr16_meth_quant.pdf")
+
+
+```
