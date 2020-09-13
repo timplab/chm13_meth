@@ -1,0 +1,234 @@
+---
+title: "chm13 final assembly"
+author: "G$"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_notebook: default
+  pdf_document: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+#rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE,
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+db <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(biomaRt)
+library(BPRMeth)
+library(tidyverse)
+library(GenomicRanges)
+```
+
+```{r functions, include = F}
+getQQ <- function(one,two,qs = seq(0,1,0.01)) {
+  tibble(one = quantile(one,qs,na.rm = T),
+         two = quantile(two,qs,na.rm = T),
+         qunatile = qs)
+}
+# https://stackoverflow.com/questions/43875716/find-start-and-end-positions-indices-of-runs-consecutive-values
+#getRuns <- function(calls){
+#  calls <- calls %>%
+#    filter(mcall != -1) %>%
+#    group_by(qname)
+#  calls.list <- calls %>%
+#    group_split(keep = F)
+#  names(calls.list) <- calls %>% group_keys() %>% .$qname
+#  runs.list <- lapply(calls.list,function(x){
+#    rle(x$mcall) %>%
+#    unclass() %>% as.tibble() %>%
+#    mutate( endi = cumsum(lengths),
+#            starti = c(1,dplyr::lag(endi)[-1]+1),
+#            start = x$start[starti],
+#            end = x$start[endi],
+#            width = end - start + 1) %>%
+#      filter( width >= 0) # remove negative widths (in case of dups, etc.)
+#  })
+#  runs <- bind_rows(runs.list,.id = "qname")
+#}
+order_reads <- function(x,bounds=NULL){
+  # get boundaries of reads if not provided
+  if (is.null(bounds)){
+    bounds <- x%>% group_by(qname) %>%
+      summarize(start = min(start),
+                end = max(end))
+    # label y based on order of smallest start
+    bounds<- bounds %>% arrange(start, end) %>%
+      mutate(
+        readi = seq_len(length(unique(x$qname))),
+        ymin = -readi - 0.8, 
+        ymax = ymin + 0.6)
+  }
+  x <- x %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  bounds <- bounds %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  return(list(x = x,bounds = bounds))
+}
+smoothCalls <- function(calls,reg=NULL,bandwidth = 80){
+  calls <- calls %>%
+    mutate(mcall = ifelse(abs(score)>1,sign(score),score)) # ceiling based on log-lik ratio - this uses log-lik ratio when call is not obvious
+  if (is.null(reg)) {
+    xpoints <- seq(min(calls$start),max(calls$start))
+  } else {
+    reg <- as_tibble(reg)
+    xpoints <- seq(reg$start,reg$end)
+  }
+  ks <- ksmooth(calls$start,calls$mcall,bandwidth = 80,kernel = "normal",x.points = xpoints)
+  tibble(
+    start = ks$x,
+    mcall_smooth = ks$y, 
+    mcall = case_when(
+      mcall_smooth > 0 ~ 1,
+      mcall_smooth < 0 ~ 0,
+      TRUE ~ -1)) 
+}
+
+order_models <- function(x,bounds=NULL){
+  # get boundaries of reads if not provided
+  if (is.null(bounds)){
+    bounds <- x%>% group_by(transcript_id) %>%
+      summarize(start = min(start),
+                end = max(end))
+    # label y based on order of smallest start
+    bounds<- bounds %>% arrange(start, end) %>%
+      mutate(
+        readi = seq_len(length(unique(x$transcript_id))),
+        ymin = -readi - 0.8, 
+        ymax = ymin + 0.6)
+  }
+  x <- x %>%
+    mutate(ymin = bounds$ymin[match(transcript_id,bounds$transcript_id)],
+           ymax = bounds$ymax[match(transcript_id,bounds$transcript_id)])
+  bounds <- bounds %>%
+    mutate(ymin = bounds$ymin[match(transcript_id,bounds$transcript_id)],
+           ymax = bounds$ymax[match(transcript_id,bounds$transcript_id)])
+  return(list(x = x,bounds = bounds))
+}
+```
+
+```{r meth_freq, include = F}
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly"
+freq = read_tsv(paste0(dat, "/methylation_frequency.tsv"))
+
+
+censat = read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727.cenSat_annotation.bed"), col_names = F) %>%
+  mutate(name = ifelse(grepl("hsat", X4), "HSAT", X4)) %>%
+  mutate(name = ifelse(grepl("ct", X4), "CT", name)) %>%
+  mutate(name = ifelse(grepl("bsat", X4), "BSAT", name)) %>%
+  mutate(name = ifelse(grepl("hor", X4), "HOR", name)) %>%
+  mutate(name = ifelse(grepl("mon", X4), "MON", name)) %>%
+  mutate(name = ifelse(grepl("Alu", X4), "censat_TE", name)) %>%
+  mutate(name = ifelse(grepl("SATR", X4), "censat_SATR", name)) %>%
+  mutate(name = ifelse(grepl("ACRO", X4), "censat_ACRO", name)) %>%
+  mutate(name = ifelse(grepl("GSATII", X4), "censat_GSATII", name)) %>%
+  mutate(name = ifelse(grepl("TAR", X4), "censat_TAR", name)) %>%
+  mutate(name = ifelse(grepl("TE", X4), "censat_TE", name)) %>%
+  mutate(name = ifelse(grepl("MER", X4), "censat_TE", name)) %>%
+  mutate(name = ifelse(grepl("MST", X4), "censat_MST", name)) %>%
+  mutate(name = ifelse(grepl("CER", X4), "censat_CER", name)) %>%
+  mutate(name = ifelse(grepl("L1", X4), "censat_TE", name)) %>%
+  mutate(name = ifelse(grepl("SST", X4), "censat_SST", name)) %>%
+  mutate(name = ifelse(grepl("LSAU", X4), "censat_LSAU", name)) %>%
+  mutate(name = ifelse(grepl("GSAT", X4), "censat_GSAT", name)) %>%
+  mutate(name = ifelse(grepl("MSAT", X4), "censat_MSAT", name)) %>%
+  mutate(name = ifelse(grepl("novel", X4), "censat_novel", name)) %>%
+  mutate(name = ifelse(grepl("HERV", X4), "censat_TE", name)) %>%
+  mutate(name = ifelse(grepl("LT", X4), "censat_TE", name)) %>%
+  dplyr::select(c(X1, X2, X3, name)) %>%
+  rename(X1 = "chrom", X2 = "start", X3 = "end") %>%
+  group_by(name) %>%
+  filter(n() >= 3) %>%
+  ungroup()
+
+rep <- repeats <- read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727_repeatmasker.out.bed"), col_names = F) 
+
+```
+
+```{r grangesobj, include=F}
+
+table(censat$name)
+censat.gr <- GRanges(as.data.frame(censat))
+
+freq_sub <- freq %>%
+  dplyr::select("chromosome", "start", "end", "methylated_frequency") %>%
+  rename(chromosome = "chrom")
+freq.gr <- GRanges(freq_sub)
+
+keepi <- findOverlaps(freq.gr,censat.gr)
+freq.matched <- freq.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(censat.gr[subjectHits(keepi)]))
+
+freq.matched
+
+censat_meth <- as.data.frame(freq.matched)
+```
+
+Let's look at methylation frequency in censat repeats genome wide
+```{r plot, echo=F}
+ggplot(data = censat_meth, aes(factor(name), methylated_frequency, fill = name))+geom_violin()
+
+```
+
+Also look at each chromosome 
+```{r plot2, echo=F}
+
+censub <- censat_meth %>%
+  filter(name == "censat_GSAT")
+ggplot(data = censat_meth, aes(factor(seqnames), methylated_frequency, fill = seqnames))+geom_violin()+facet_wrap(~name)
+```
+
+```{r meth_freq, echo = F}
+#chrX    54699831        63927487
+
+library(cowplot)
+cen1 <- freq_sub %>%
+  filter(chrom == "chrX") %>%
+  filter(start > 54699831-100000 ) %>%
+  filter(end < 63927487+100000)
+
+meth <- ggplot(cen1, aes(x = (start), y= methylated_frequency)) +stat_smooth(span = .2, n= 50)+ labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_bw(base_size = 25)
+
+censat1 <- censat %>%
+  filter(chrom == "chrX") %>%
+  filter(start > 54699831-100000 ) %>%
+  filter(end < 63927487+100000)
+
+
+rep_leg <- ggplot(data=censat1, mapping=aes(xmin=(start),xmax=(end),ymin=-1,ymax=1, fill = name))+
+  geom_rect()  +theme(legend.position="top") +labs(y="Axis") +labs(y="Axis") +theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank())
+
+censat_meth_1 <- censat_meth %>%
+  filter(seqnames == "chrX") %>%
+  filter(start > 54699831-100000 ) %>%
+  filter(end < 63927487+100000)
+
+quant <- ggplot(data = censat_meth_1, aes(factor(name), methylated_frequency, fill = name))+geom_violin()
+
+rep_sub <- rep %>%
+  filter(X1 == "chrX") %>%
+  filter(X2 > 54699831-100000 ) %>%
+  filter(X3 < 63927487+100000)
+
+rep_leg2 <- ggplot(data=rep_sub, mapping=aes(xmin=(X2),xmax=(X3),ymin=-1,ymax=1, fill = X7))+
+  geom_rect()  +theme(legend.position="top") +labs(y="Axis") +labs(y="Axis") +theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank())
+
+plot_grid(rep_leg, rep_leg2, meth, ncol = 1, align="v")
+```

@@ -1,0 +1,427 @@
+---
+title: "wgs methylation analysis"
+author: "G$"
+date: "9/3/2020"
+output: pdf_document
+---
+
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(wesanderson)
+library(ggExtra)
+library(biovizBase)
+library(Repitools)
+library(Biostrings)
+library(ggplot2)
+library(BSgenome)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggridges)
+library(GenomicRanges)
+library(RColorBrewer)
+library(BSgenome.t2t.v1.1)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly"
+
+gffRangedData<-import.gff(paste0(dat, "/liftoff/hg38_genes_t2t_liftoff.gtf")) 
+chm13 <- readRDS(paste0(dat, "/ref/chm13_200bpCpG_cov_200_CpG_num.rds"))
+
+reps <- read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727_repeatmasker.out.bed") ,col_names= F) %>%
+  select(X1, X2, X3, X7) %>%
+  dplyr::rename("chr" = X1, "start" = X2, "end" = X3, "rep_type" = X7) %>%
+  mutate(len = end - start) %>%
+  mutate(ID = row_number())
+SD <- read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727.SDs.bed")) %>%
+  dplyr::rename("chr" = 1, "start" = 2, "end" = 3) %>%
+  mutate(start = start +1)
+censat = read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727.cenSat_annotation.bed"), col_names = F) %>%
+  mutate(name = ifelse(grepl("HSat1", X4), "HSAT1", X4)) %>%
+  mutate(name = ifelse(grepl("HSat2", X4), "HSAT2", name)) %>%
+  mutate(name = ifelse(grepl("HSat3", X4), "HSAT3", name)) %>%
+  mutate(name = ifelse(grepl("HSat4", X4), "HSAT4", name)) %>%
+  mutate(name = ifelse(grepl("HSat5", X4), "HSAT5", name)) %>%
+  mutate(name = ifelse(grepl("HSat6", X4), "HSAT6", name)) %>%
+  mutate(name = ifelse(grepl("ct", X4), "CT", name)) %>%
+  mutate(name = ifelse(grepl("bsat", X4), "BSAT", name)) %>%
+  mutate(name = ifelse(grepl("hor", X4), "HOR", name)) %>%
+  mutate(name = ifelse(grepl("mon", X4), "MON", name)) %>%
+  mutate(name = ifelse(grepl("Alu", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("SATR", X4), "SATR", name)) %>%
+  mutate(name = ifelse(grepl("ACRO", X4), "ACRO", name)) %>%
+  mutate(name = ifelse(grepl("GSATII", X4), "GSATII", name)) %>%
+  mutate(name = ifelse(grepl("TAR", X4), "TAR", name)) %>%
+  mutate(name = ifelse(grepl("TE", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("MER", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("MST", X4), "MST", name)) %>%
+  mutate(name = ifelse(grepl("CER", X4), "CER", name)) %>%
+  mutate(name = ifelse(grepl("L1", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("SST", X4), "SST", name)) %>%
+  mutate(name = ifelse(grepl("LSAU", X4), "LSAU", name)) %>%
+  mutate(name = ifelse(grepl("GSAT", X4), "GSAT", name)) %>%
+  mutate(name = ifelse(grepl("MSAT", X4), "MSAT", name)) %>%
+  mutate(name = ifelse(grepl("novel", X4), "novel", name)) %>%
+  mutate(name = ifelse(grepl("HERV", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("LT", X4), "TE", name)) %>%
+  dplyr::select(c(X1, X2, X3, name)) %>%
+  dplyr::rename("chrom" =1, "start" = 2 ,"end" =3) %>%
+  ungroup()
+table(censat$name)
+
+```
+
+
+```{r functions, include=F}
+CalculateCpG <- function (obj, ..., step, as.prob = TRUE) 
+{
+    require(BSgenome)
+    seqs <- getSeq(obj, ..., as.character = FALSE)
+    if (missing(step)) {
+        res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,7]
+    }
+    else {
+        res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, 2, step = step, as.prob = as.prob)[,7])
+        if (length(res) == 1) 
+            res <- unlist(res)
+    }
+    res
+}
+
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend) }
+
+smoothplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA)) %>%
+  mutate(meth = rollmean(meth, 200, fill = NA))
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(cen, aes(x=smooth, y = meth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,20)+theme(legend.position = c(0.8, 0.2))+theme_classic()+ylim(0,1)
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+prettyplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA))
+
+p <- ggplot(cen, aes(x=smooth, y = meth))+
+  geom_bin2d(aes(fill=..count..)) +
+  scale_fill_gradientn(colours = pal)+
+  theme_classic()+xlim(0,20)+theme(legend.position = c(0.8, 0.2))
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+ovls<-function(gr1, gr2){
+  keepi <- findOverlaps(gr1, gr2)
+freq.matched <- gr1[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(gr2[subjectHits(keepi)]))
+
+df <- as.data.frame(freq.matched)
+return(df)
+}
+
+```
+
+```{r repeats, echo=F}
+
+reps.gr <- GRanges(as.data.frame(reps))
+
+rep_meth <- ovls(chm13, reps.gr)
+
+p <- prettyplot(rep_meth)
+
+ggsave(
+  paste0(figs, "/","repeats_methyl_heatmap.pdf"),
+  plot = p,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+
+#types <- levels(as.factor(rep_meth$rep_type))
+types = c("LINE", "Low_complexity", "LTR", "tRNA", "rRNA", "RC", "Satellite", "Simple_repeat", "DNA", "Retroposon")
+
+for (i in 1:length(types)){
+  sub <- types[i]
+  
+HOR <- rep_meth %>%
+  filter(rep_type == sub)
+
+p <- smoothplot(HOR)
+
+ggsave(
+  paste0(figs, "/",sub,"_methyl_smooth.pdf"),
+  plot = p,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+}
+```
+
+```{r censatgr, include=F}
+
+censat.gr <- GRanges(as.data.frame(censat))
+
+censat_meth <- ovls(chm13, censat.gr)
+
+p <- prettyplot(censat_meth)
+p
+
+ggsave(
+  paste0(figs, "/","censat_methyl_heatmap.pdf"),
+  plot = p,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+
+#types <- levels(as.factor(censat_meth$name))
+types = c("BSAT", "CER", "CT", "GSAT", "HOR", "HSAT1", "HSAT2", "SST", "MON", "SATR")
+
+for (i in 1:length(types)){
+  sub <- types[i]
+  
+HOR <- censat_meth %>%
+  filter(name == sub) 
+p <- smoothplot(HOR)
+
+p
+
+ggsave(
+  paste0(figs, "/",sub,"_methyl_smoothmap.pdf"),
+  plot = p,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+}
+
+```
+
+
+```{r SDs, include=F}
+
+sd.gr <- GRanges(SD)
+sd_meth <- ovls(chm13, sd.gr)
+p <- prettyplot(sd_meth)
+
+
+ggsave(
+  paste0(figs, "/","SD_methyl_heatmap.pdf"),
+  plot = p,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+```
+
+
+```{r genes, echo=F}
+
+genes <- gffRangedData[gffRangedData$type == "gene" ]
+
+TSS <- start(resize(genes, 1))
+upstream <- TSS - 2000
+
+mcols(genes) <- cbind.data.frame(
+    mcols(genes),
+    TSS, upstream)
+
+upstream_tss <- as.data.frame(genes) %>%
+  mutate(end = TSS) %>%
+  mutate(start = upstream)
+  
+genes.gr <-as(upstream_tss, "GRanges")
+
+
+genes_meth <- ovls(chm13, genes.gr)
+
+p <- smoothplot(genes_meth)
+
+
+genes_meth2 <- genes_meth %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA)) %>%
+  mutate(meth = rollmean(meth, 200, fill = NA))
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(genes_meth2, aes(x=smooth, y = meth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,20)+theme(legend.position = c(0.8, 0.2))+theme_classic()
+
+ggsave(
+  paste0(figs, "/","2kb_upstream_methyl_smoothplot.pdf"),
+  plot = p,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+```
+
+```{r genes, echo=F}
+
+exon <- gffRangedData[gffRangedData$type == "gene" ]
+exon_meth <- ovls(chm13, exon)
+p <- prettyplot(exon_meth)
+
+exon_meth <- exon_meth %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA)) %>%
+  mutate(meth = rollmean(meth, 200, fill = NA))
+
+p <- ggplot(exon_meth, aes(x=smooth, y = meth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", bins =10, contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted", bins= 10)+xlim(0,20)+theme(legend.position = c(0.8, 0.2))+theme_classic()+ylim(0,1)
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(exon_meth, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(exon_meth, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+
+
+ggsave(
+  paste0(figs, "/","genes_methyl_smooth.pdf"),
+  plot = p,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+```
+
+
+```{r SD_genes, echo=F}
+genes_meth.gr <- GRanges(genes_meth)
+sd_meth.gr <- GRanges(sd_meth)
+
+
+sd_genes <- ovls(genes_meth.gr, sd_meth.gr)
+
+p <- prettyplot(sd_genes)
+
+ggsave(
+  paste0(figs, "/","SDgenes_methyl_heatmap.pdf"),
+  plot = p,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+p <- ggplot(sd_genes, aes(x=fracMatch, y = meth))+
+  stat_bin_hex(binwidth = c(.0055 ,.04), aes(fill=..density.., color = ..density..)) +
+  scale_fill_gradientn(colours = pal)+
+  scale_color_gradientn(colours = pal,guide = FALSE)+
+  theme_classic()+theme(legend.position = c(0.8, 0.2))
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+
+p1 = p + thm[-1]
+p2 = ggplot(sd_genes, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(sd_genes, aes(fracMatch)) +
+  geom_histogram() +
+  thm 
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1), rel_widths=c(5,1))
+
+ggsave(
+  paste0(figs, "/","SD_FracMatch_methyl_heatmap.pdf"),
+  plot = plot_final,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+
+```
+
+```{r cengenes, echo=F}
+CT <- censat_meth %>%
+  filter(name == "CT") 
+
+ct.gr <- GRanges(CT)
+
+CT_meth <- ovls(ct.gr, exon)
+
+p <- smoothplot(CT_meth)
+```
+
+

@@ -1,0 +1,284 @@
+---
+title: "SD Methylation"
+output: html_notebook
+---
+
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(wesanderson)
+library(factoextra)
+library(NbClust)
+library(ggExtra)
+library(biovizBase)
+library(Repitools)
+library(Biostrings)
+library(ggplot2)
+library(BSgenome)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggridges)
+library(GenomicRanges)
+library(RColorBrewer)
+library(BSgenome.t2t.v1.1)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly"
+chm13 <- readRDS(paste0(dat, "/ref/chm13_200bpCpG_cov_mfreq.rds"))
+exp <- import.gff(paste0(dat, "/isoseq/stringtie2/chm13_merge_ST2_1st.gtf")) 
+
+SD <- read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727.SDs.RR.bed"))%>%
+  dplyr::rename("chr" = 1, "start" = 2, "end" = 3) %>%
+  mutate(start = start +1)
+```
+
+
+```{r functions, include=F}
+CalculateCpG <- function (obj, ..., step, as.prob = TRUE) 
+{
+    require(BSgenome)
+    seqs <- getSeq(obj, ..., as.character = FALSE)
+    if (missing(step)) {
+        res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,7]
+    }
+    else {
+        res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, 2, step = step, as.prob = as.prob)[,7])
+        if (length(res) == 1) 
+            res <- unlist(res)
+    }
+    res
+}
+
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend) }
+
+
+
+prettyplot<-function(sd_df){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+p <- ggplot(sd_df, aes(x=site, y = diff))+stat_density_2d(aes(fill = ..density..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+theme_classic()+xlim(0,200)
+
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(sd_df, aes(diff)) +
+  geom_histogram() +
+  thm +
+  coord_flip()
+p3 = ggplot(sd_df, aes(site)) +
+  geom_histogram() +
+  thm +xlim(0,200)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+
+return(plot_final)
+}
+
+
+ovls<-function(gr1, gr2){
+  keepi <- findOverlaps(gr1, gr2)
+freq.matched <- gr1[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(gr2[subjectHits(keepi)]))
+
+df <- as.data.frame(freq.matched)
+return(df)
+}
+
+order_models <- function(x,bounds=NULL){
+  # get boundaries of reads if not provided
+  if (is.null(bounds)){
+    bounds <- test%>% group_by(transcript_id,TPM) %>%
+      summarize(start = min(start),
+                end = max(end)) 
+    # label y based on order of smallest start
+    bounds<- bounds %>%
+      arrange(start, end) %>%
+      mutate(
+        readi = seq_len(length(unique(transcript_id))),
+        ymin = -readi - 0.8, 
+        ymax = ymin + 0.6)}
+}
+
+smoothplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA)) %>%
+  mutate(meth = rollmean(meth, 200, fill = NA))
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(cen, aes(x=smooth, y = meth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,20)+theme(legend.position = c(0.8, 0.2))+theme_classic()+ylim(0,1)
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+  
+```
+
+```{r SD, include=F}
+sd.gr <- GRanges(SD)
+sd_meth <- ovls(chm13, sd.gr)
+
+sd_df <- sd_meth %>%
+  group_by(name,ID, fracMatch) %>%
+  summarise(avgmeth = mean(meth), site = n()) %>%
+  ungroup() %>%
+  group_by(ID) %>%
+  mutate(diff = abs(avgmeth - lag(avgmeth))) %>%
+  ungroup() %>%
+  arrange(ID) 
+ 
+
+data_wide <- sd_df %>%
+  group_by(ID) %>%
+  arrange(name) %>%
+  select(ID, fracMatch, avgmeth) %>%
+  mutate(copy = row_number()) %>%
+  spread(copy, avgmeth) %>%
+  dplyr::rename("copy1_meth" = 3, "copy2_meth" = 4) %>%
+  mutate(meth_diff = log2(copy1_meth/copy2_meth))
+
+
+p <- ggplot(sd_df, aes(x=avgmeth, y = fracMatch))+stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+theme_classic()+ geom_density_2d(color = "black", linetype = "dotted")+scale_fill_gradientn(colours = pal)+geom_smooth(method = "lm",color = "black", linetype = "dashed")
+p
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(data_wide, aes(x=copy1_meth, y = copy2_meth))+stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+theme_classic()+ geom_density_2d(color = "black", linetype = "dotted")+scale_fill_gradientn(colours = pal)+geom_abline(sslope = 1, intercept = 0, color = "black", linetype = "dashed")
+p
+
+ggsave(
+  paste0(figs, "/","SD_fracMatch_avgmeth_smooth.pdf"),
+  plot = p,
+  scale = 1,
+  width = 9,
+  height = 9,
+)
+
+```
+
+```{r expression,include=F}
+
+
+gene_ovls <- ovls(exp,sd.gr)
+
+
+exp_SD <- gene_ovls %>%
+  filter(type == "transcript") %>%
+  mutate(TPM = as.numeric(TPM)) %>%
+  group_by(ID,gene_id,transcript_id,name,TPM,seqnames,start,end) %>%
+  summarise(TPM = sum(TPM)+1) %>%
+  ungroup()
+
+lists <- exp_SD %>%
+  select(c(ID,name)) %>%
+  distinct() %>%
+  group_by(ID) %>%
+  filter(n() >= 2) %>%
+  arrange(name) %>%
+  mutate(copy = row_number()) %>%
+  ungroup() %>%
+  select(-c(ID))
+
+exp_SD <- merge(exp_SD,lists, by = "name")
+
+exp_all <- exp_SD %>%
+  distinct()%>%
+  group_by(ID, copy) %>%
+  mutate(i = row_number()) %>%
+  select(ID, copy, TPM,i) %>%
+  spread(copy,TPM) %>%
+  drop_na() %>%
+  dplyr::rename("copy1_tpm" = 3, "copy2_tpm" = 4) %>%
+  mutate(fc = log2(copy1_tpm/copy2_tpm))
+  
+dat_all <- merge(exp_all,data_wide, by = "ID") %>%
+  select(ID, fc, meth_diff) %>%
+   mutate(
+    group = case_when(
+      fc < -3 & meth_diff < -3 ~ "up_up",
+      fc < -3 & meth_diff > 3 ~ "down_down",
+      fc > 3 & meth_diff < -3 ~ "up_down",
+      fc > 3 & meth_diff > 3 ~ "down_up",
+      TRUE  ~  "nc"
+    )
+  )
+
+
+library(ggExtra)
+p <- ggplot(dat_all, aes(x = meth_diff, y = fc, color = group))+geom_point()+theme_classic()
+p <- ggMarginal(p,type = "histogram")
+
+ggsave(
+  paste0(figs, "/","SD_exp_methyl_scatter.pdf"),
+  plot = p,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+
+```
+
+
+```{r pca, include=F}
+
+up_down <- dat_all %>%
+  filter(group == "up_down")
+check <- exp_SD %>%
+  filter(ID %in% up_down$ID)  %>%
+  mutate(len = end-start)
+
+bis <- sd_meth %>% 
+  filter(ID %in% "4f9f3d84-f166-11ea-bd78-20040fefa25c") %>%
+  group_by(seqnames) %>%
+  arrange(start) %>%
+  mutate(smooth = rollmean(meth, 5, NA))
+
+meth <- ggplot(bis, aes(x = (start), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+facet_wrap(~seqnames, scales = "free", ncol =1)+ylim(0,1)
+meth
+
+
+```
+
+
+
