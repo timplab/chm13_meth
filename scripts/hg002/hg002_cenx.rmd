@@ -10,43 +10,90 @@ library(knitr)
 library(tidyverse)
 library(bsseq)
 library(Biostrings)
-library(GenomicRanges)
-library(Rsamtools)
-library(Sushi)
 library(ggplot2)
-library(png)
-
+#library(png)
+library(zoo)
+library(cowplot)
+options(scipen=999)
 options(knitr.duplicate.label = 'allow')
 ```
 
 
 
+
+
 ```{r include=FALSE}
-tig=params$tig
-cen1=(params$cen1)-10000
-cen2=(params$cen2)+10000
 
+bis="/uru/Data/Nanopore/Analysis/gmoney/chm13/hg002/nanpolish_v13/asm8_primary.tig00021361_fixed_bismark.out"
+mcalls <- read_tsv("/uru/Data/Nanopore/Analysis/gmoney/chm13/hg002/nanpolish_v13/methylation_tq.tsv")
+mcalls_v11 <- read_tsv("/uru/Data/Nanopore/Analysis/gmoney/chm13/hg002/fixed_alignments/asm8_primary.tig00021361_fixed_methylation_calls.tsv")
+bismark <- read_tsv(bis, col_names = F)
+cov <- read_tsv("/uru/Data/Nanopore/Analysis/gmoney/chm13/hg002/nanpolish_v13/asm8_primary.tig00021361_fixed_meth.cov", col_names = F)
+BS <- read.bismark(bis)
 
-bismark <- read_tsv(params$bismark, col_names = F)
-cov <- read_tsv(params$cov, col_names = F)
-BS <- read.bismark(params$bismark)
-repeats <- read_tsv(params$repeats, col_names = F)
+#cov_nometh <- read_tsv("/uru/Data/Nanopore/Analysis/gmoney/chm13/hg002/asm8_primary.tig00021361_no_meth.cov", col_names = F)
+
+repeats <- read_tsv("/uru/Data/Nanopore/Analysis/gmoney/chm13/hg002/old_alignments/asm8_primary.tig00021361_forPlot.tsv", col_names = F) %>%
+  mutate(X2 = (X2-1)) %>%
+  separate(X5, c("class", "family"), sep =  "/") %>%
+  mutate("family" = replace_na(family, "Unknown")) %>%
+  rename(X4 = "repeat_type") %>%
+  mutate(name = ifelse(family == c("centr"), paste0(class,"/",family),class)) %>%
+  mutate(name = ifelse(family == c("telo"), paste0(class,"/",family),name)) %>%
+  mutate(name = ifelse(family == c("acro"), paste0(class,"/",family),name)) %>%
+  mutate(name = ifelse(family == c("subtelo"), paste0(class,"/",family),name)) %>%
+  mutate(name = ifelse(name == c("Satellite"), repeat_type,name)) %>%
+  mutate(name = ifelse(name == "Satellite/centr", repeat_type, name)) %>%
+  mutate(name = ifelse(name == "DNA?", "DNA", name)) %>%
+  mutate(name = ifelse(grepl("GSAT", repeat_type), "GSAT", name)) %>%
+  mutate(name = ifelse(grepl("HSAT", repeat_type), "HSAT", name)) %>%
+  mutate(name = ifelse(name == "Unspecified", "Unknown", name)) %>%
+  mutate(name = ifelse(class == c("RC"), paste0(class,"/",family),name)) %>%
+  mutate(name = as.factor(name))
+
 
 ```
 
+# calculate percent methylated and percent of high quality calls
+
+
+```{r, include = F}
+
+m <- length(which(mcalls$log_lik_ratio>2.5))
+u <- length(which(mcalls$log_lik_ratio<(-2.5)))
+a <- length(mcalls$log_lik_ratio)
+calls <- round((((m+u)/a)*100), digits = 2)
+meth <- round(((m/(m+u))*100), digits=2)
+total= m+ u
+print(ggplot(data = mcalls, aes(x=log_lik_ratio))+geom_histogram(alpha=.5, binwidth = .5, fill = "red")+theme_bw()+geom_vline(xintercept= c(-1.5, 1.5), linetype="dashed", color="black")+xlim(-20,20))
+```
+
+Methylation Summary stats v13:
+  
+  Percent high quality calls: `r calls`%  
+Percent methylation: `r meth`%  
+
+```{r, include = F}
+
+m <- length(which(mcalls_v11$log_lik_ratio>2.5))
+u <- length(which(mcalls_v11$log_lik_ratio<(-2.5)))
+a <- length(mcalls_v11$log_lik_ratio)
+calls <- round((((m+u)/a)*100), digits = 2)
+meth <- round(((m/(m+u))*100), digits=2)
+total= m+ u
+print(ggplot(data = mcalls_v11, aes(x=log_lik_ratio))+geom_histogram(alpha=.5, binwidth = .5, fill = "red")+theme_bw()+geom_vline(xintercept= c(-1.5, 1.5), linetype="dashed", color="black")+xlim(-20,20))
+```
+
+
 ```{r include = FALSE}
-smoothed=500
+smoothed=1000
 smooth <-BSmooth(BS, 
                  ns=smoothed)
 
-rawmeth <- getMeth(BS, type = "raw")
+#rawmeth <- getMeth(BS, type = "raw")
 getmeth <- getMeth(smooth)
 getmeth <- as_tibble(cbind(getmeth, bismark$X2), colnames(c("meth", "coords")))
 
-rawmeth <- as_tibble(cbind(bismark$X1, bismark$X2, rawmeth))
-rawmeth <- add_column(rawmeth, d = "meth", .after = 2)
-
-write.table(rawmeth, file = paste0("/uru/Data/Nanopore/Analysis/gmoney/chm13/censat/phase_2/wig/",tig, ".wig"), col.names = F, row.names = F, quote = F, sep = "\t")
 colnames(getmeth) <- c("meth", "coord")
 ```
 
@@ -56,33 +103,78 @@ Methylation data for:  `r params$tig` :  `r print(params$cen1)`  -  `r print(par
 
 ```{r fig.width=12, fig.height=6}
 plot <- getmeth %>% 
-  ggplot(aes(x = (coord), y= meth)) +geom_line()+ labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_bw()+xlim(cen1,cen2)
-
+  ggplot(aes(x = (coord), y= meth)) +geom_line()+ labs(x="Genomic coordinates", y="Methylation")+theme_bw()#+xlim(100000,4500000)
+print(plot)
 ```
 
 
 ```{r fig.width=12, fig.height=6}
-depth <- ggplot(cov, aes(x=X2, y=X4))+geom_line()+ labs(x="Genomic coordinates (Mb)", y="read depth")+theme_bw()+xlim(cen1,cen2)
+
+depth <- ggplot(cov, aes(x=X2, y=X4))+geom_line()+ labs(x="Genomic coordinates (Mb)", y="read depth")+theme_bw()
+
+library(Sushi)
+plotBedgraph((as.data.frame(cov)),	"tig00021361", chromstart = 0, chromend = 6000000,transparency =.5, color= SushiColors(2)(2)[1])
+labelgenome("CENX",0,6000000,n=3,scale="Kb")
+#mtext("Read Depth",side=2,line=1.75,cex=1,font=2)
+axis(side=2,las=2,tcl=.2)
+
 
 ```
 
-```{r fig.width=12, fig.height=6}
 
-#repeats$X5[grepl("DNA", repeats$X5)] <- "DNA"
-#repeats$X5[grepl("LINE", repeats$X5)] <- "LINE"
-#repeats$X5[grepl("SINE", repeats$X5)] <- "SINE"
-#repeats$X5[grepl("LTR", repeats$X5)] <- "LTR"
-
-repeatColors <- setNames( c('red', 'forestgreen', 'blue'),levels(repeats$X5))
-
-rep_leg <- ggplot(data=repeats, mapping=aes(xmin=(X2),xmax=(X3),ymin=-1,ymax=1 , fill=X5))+
-  geom_rect()  +  theme_void() +theme(legend.position="top") +labs(y="Axis")+xlim(cen1,cen2) +labs(y="Axis")
-
-require(gridExtra)
-all <- grid.arrange(rep_leg,plot, depth, ncol = 1)
+```{r fig.width=12, fig.height=5}
 
 
 
+
+repeatColors =c("(CATTC)n" = "#E87C71",
+    "(GAATC)n"="#E28455",
+    "ALR/Alpha"="#D78C32",
+    "BSR/Beta"="#E370AB",
+    "CER" = "#CE9334",
+    "DNA"="#C19935",
+    "GSAT"="#B3A033",
+    "HSAT"="#A2A638",
+       "LINE"="#8CAC3E",
+    "Low_complexity"="#75B042",
+    "LSAU"="#54B346",
+    "LTR"="#51B756",
+    "RC/Helitron"="#53BB73",
+    "Retroposon"="#55BE8D",
+    "RNA"="#54C0A5",
+    "rRNA"="#52BEBB",
+    "SAR"="#51BDCE",
+    "Satellite/acro"="#4EB8DF",
+    "Satellite/telo"="#53B0E3",
+    "SATR1"="#5AA5DA",
+    "scRNA"="#6B9AD2",
+    "Simple_repeat"="#8992C8",
+    "SINE"="#9A8AC1",
+    "snRNA"="#A885BC",
+    "srpRNA"="#B67EB6",
+    "SST1"="#C378B2",
+    "Satellite/subtelo"="#D173AF", 
+    "tRNA"="#ED72A5",
+    "Unknown"="#EF768C",
+    "(GAATG)n"="#ff4000",
+    "D20S16" = "#ffbf00",
+   "SATR2"= "#0080ff" )
+
+defaultColor = "#000080"
+
+
+rep_leg <- ggplot(data=repeats, mapping=aes(xmin=(X2),xmax=(X3),ymin=-1,ymax=1, fill = name))+
+  geom_rect()  +  theme_void() +theme(legend.position="top") +labs(y="Axis")+labs(y="Axis") + scale_fill_manual(values = repeatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank())+xlim(100000,4500000)
+
+
+plot_all <- plot_grid(rep_leg,plot,depth, ncol = 1, align="v")
+print(plot_all)
+#ggsave("/uru/Data/Nanopore/Analysis/gmoney/chm13/hg002/meth_plot.pdf",plot_all, width=12,height=5)
+```
+
+
+
+    
 ```
 
 
