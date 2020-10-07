@@ -122,15 +122,12 @@ violin <- ggplot(data = censat_meth, aes(factor(name), methylated_frequency, fil
 
 
 ```{r bis, echo=F}
-cen <- read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727.cenRegions.bed"), col_names = F)
+reads <- tabix_mbed(paste0(dat, "/cen/DXZ4.mbed"),extcol = "motif",by = "read") 
+SD <- read_tsv(paste0(dat, "/annotations/chm13.20200602_dupmasker_colors.bed"), col_names = F)
 
-for (i in 1:length(cen$X1)){
-  chr=cen$X1[i]
-  start=cen$X2[i]
-  end=cen$X3[i]
-  reads <- tabix_mbed(paste0(dat, "/cen/", chr, "_cen.mbed"),extcol = "motif",by = "read") 
-#chrX:48,626,035-49,040,073
-
+chr="chrX"
+start=114117750
+end=114324768
 size_sel <- reads %>%
   mutate(rlen = end-start) %>%
   filter(rlen >= 50000) %>%
@@ -143,31 +140,28 @@ cgcalls <- mbedByCall(size_sel) %>%
 bis <- cgcalls %>% 
   group_by(chrom, start) %>%
   summarise(meth_freq = mean(mcall), cov = n()) %>%
-  mutate(smooth = rollmean(meth_freq, 200, fill = NA)) %>%
-  mutate(cov_smooth = rollmean(cov, 200, fill = NA))
+  mutate(smooth = rollmean(meth_freq, 50, fill = NA)) %>%
+  mutate(cov_smooth = rollmean(cov, 50, fill = NA))
 
 meth <- ggplot(bis, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim((start/1e6),(end/1e6))
 
 cov <- ggplot(bis, aes(x = (start/1e6), y= cov_smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Coverage")+theme_classic(base_size = 25)+xlim(start,end)
 
-censat_reg <- censat %>%
-  filter(chrom == chr) 
+meth
+#rep_leg <- ggplot(data=SD_reg, mapping=aes(xmin=(X2),xmax=(X3),ymin=0,ymax=.1, fill = X4))+
+#  geom_rect()  +  theme_void() +theme(legend.position="top") +labs(y="Axis")+xlim(start,end) #+labs(y="Axis")+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank())
 
-rep_leg <- ggplot(data=censat_reg, mapping=aes(xmin=(start),xmax=(end),ymin=0,ymax=.1, fill = name))+
-  geom_rect()  +  theme_void() +theme(legend.position="top") +labs(y="Axis")+xlim(start,end) +labs(y="Axis")+ scale_fill_manual(values = repeatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank())
 
-top_row <- plot_grid(rep_leg,meth,cov, ncol = 1, align="v")
-top_row
 
 ggsave(
-  paste0(figs, "/", chr, "BSAT_methyl_pattern.pdf"),
+  paste0(figs, "/", chr, "DXZ4_methyl_pattern.pdf"),
   plot = top_row,
   scale = 1,
   width = 12,
-  height = 12,
+  height = 6,
 )
 
-}
+
 
 ```
 

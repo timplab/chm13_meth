@@ -1,0 +1,619 @@
+---
+title: "nanoNOMe single-read test"
+author: "Isac Lee"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_notebook: default
+  pdf_document: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r setup, eval=TRUE, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+rm(list=ls());gc()
+knitr::opts_chunk$set(fig.path='figs/')
+knitr::opts_chunk$set(cache = FALSE, warning = FALSE,
+                      message = FALSE, cache.lazy = FALSE)
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+```
+
+```{r libs, eval=T, include=FALSE, cache=F, message=F, warning=F, results="hide"}
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("~/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(bsseq)
+library(TxDb.Hsapiens.UCSC.hg38.knownGene)
+db <- TxDb.Hsapiens.UCSC.hg38.knownGene
+library(biomaRt)
+library(BPRMeth)
+library(mclust)
+
+
+```
+
+```{r functions, include = F}
+getQQ <- function(one,two,qs = seq(0,1,0.01)) {
+  tibble(one = quantile(one,qs,na.rm = T),
+         two = quantile(two,qs,na.rm = T),
+         qunatile = qs)
+}
+```
+```{r paths, eval = T, include = FALSE, cache=F }
+nanonomedir <- "/uru/Data/Nanopore/projects/nanonome/pooled"
+subdir <- file.path(nanonomedir,"../regs")
+plotdir <- "~/Dropbox/Data/nome-seq/version3_guppy3/plots/readlevel"
+cpg_fp <- file.path(nanonomedir,"mfreq/GM12878_nanoNOMe.cpg.mfreq.txt.gz")
+gpc_fp <- file.path(nanonomedir,"mfreq/GM12878_nanoNOMe.gpc.mfreq.txt.gz")
+cpg_bs_fp <- file.path(nanonomedir,"mfreq/GM12878_nanoNOMe.cpg.BSseq.rds")
+gpc_bs_fp <- file.path(nanonomedir,"mfreq/GM12878_nanoNOMe.gpc.BSseq.rds")
+# mbed
+mbed_path <- file.path(nanonomedir,"pooled/GM12878_nanoNOMe.cpggpc.meth.bed.gz")
+```
+
+```{r genes, eval = T, include = FALSE, cache=T }
+# expression data
+exp_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/gm12878/GM12878_transcripts_quartiles.bed"
+expression <- read_tsv(exp_fp,col_names=c("chrom","start","end","txid","quartile"))
+expression$txid <- sapply(strsplit(expression$txid,"[.]"),"[[",1)
+high_id <- expression[which(expression$quartile == 1),]$txid
+low_id <- expression[which(expression$quartile == 4),]$txid
+# biomart
+mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+trans_all <- getBM(attributes = c("chromosome_name", 
+                              "start_position",
+                              "end_position",
+                              "strand",
+                              "entrezgene_id",
+                              "ensembl_gene_id",
+                              "ensembl_transcript_id",
+                              "hgnc_symbol"), mart = mart)
+trans <- trans_all %>%
+  as_tibble() %>%
+  dplyr::rename(chrom = chromosome_name, start = start_position, end = end_position) %>%
+  arrange(chrom,start,end) %>%
+  mutate(chrom= 
+           ifelse(grepl("chr",chrom),
+                  chromosome,paste0("chr",chrom)),
+         strand = ifelse(strand == 1,"+","-")) %>%
+  distinct(chrom,start,end,ensembl_gene_id, .keep_all =T)
+
+```
+
+```{r regulatory_elements, eval = T, include = FALSE, cache=T }
+# regulatory elements
+regulatory_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/hg38_regulatory_features.bed"
+regulatory <- read_tsv(regulatory_fp,col_names = c("chrom","start","end","type"))
+
+# CTCF motifs
+ctcf_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/CTCF_bindingsites_hg38.bed"
+ctcf <- read_tsv(ctcf_fp,col_names = c("chrom","start","end"))
+# replace ctcf binding sites in regulatory data with better ctcf binding sites
+regulatory <- regulatory %>%
+  filter(type != "CTCF_binding_site") %>%
+  bind_rows(ctcf %>% mutate(type = "CTCF_binding_site"))
+
+# let's also only look at ctcf, enhancer, and TF binding sites
+regulatory <- regulatory %>%
+  filter(type %in% c("CTCF_binding_site","enhancer","TF_binding_site"))
+regulatory  %>%
+  mutate( width = end - start + 1 ) %>%
+  group_by(type) %>%
+  summarize( n = n(),
+    mean = mean(width),
+    median = median(width))
+regulatory.gr <- GRanges(regulatory)
+
+# let's look at Cgi
+cgi_fp <- "/kyber/Data/Nanopore/projects/nanonome/analysis/data/hg38/hg38_cgi.bed"
+cgi <- read_tsv(cgi_fp,col_names = c("chrom","start","end"))
+cgi.gr <- GRanges(cgi)
+
+```
+
+```{r annotation_parse, eval = T, include = FALSE, cache=T }
+# let's first link transcript with expression
+trans <- trans %>%
+  mutate(exp = expression$quartile[match(trans$ensembl_transcript_id,expression$txid)]) %>%
+  filter(!is.na(exp))
+# tss as bed format
+tss <- trans %>%
+  mutate(start = ifelse(strand == "-",end,start) - 1,
+         end = start + 1) %>%
+  dplyr::select(chrom,start,end,txid = ensembl_transcript_id,exp,strand,ensid = ensembl_gene_id,hgnc = hgnc_symbol)
+
+# make granges
+trans.gr <- GRanges(trans)
+
+# tss
+tss.gr <- GRanges(tss)
+# 10kb window
+winsize <- 10e3
+windows.gr <- resize(tss.gr,width = winsize,fix = "center")
+# only those that have CGI within 10kb
+windows.gr <- windows.gr[overlapsAny(windows.gr,cgi.gr)]
+# exclue those that also overlap 2kb region 
+exclude.gr <- resize(tss.gr,width = 2e3, fix = "center")
+
+# first get regulatory elemetns that do not overlap this
+regul.distant <- regulatory.gr[!overlapsAny(regulatory.gr,exclude.gr)]
+
+# overlap regs with regulatory elements
+ovl <- findOverlaps(regul.distant,windows.gr,minoverlap = 20)
+
+# number of regulatory elements per tss region
+num_regulatory.tb <- as.data.frame(table(subjectHits(ovl))) %>%
+  as_tibble() %>% 
+  dplyr::rename(idx = "Var1") %>%
+  mutate(idx = as.numeric(as.character(idx)),
+         txid = windows.gr$txid[idx] ) %>%
+  group_by(txid) %>%
+  summarize(Freq = sum(Freq))
+nrow(num_regulatory.tb)
+
+summary(num_regulatory.tb$Freq)
+
+# subset those that have at least 1 regulatory elements within 10kb
+txid.select <- num_regulatory.tb$txid[num_regulatory.tb$Freq > 0]
+tss.sub <- tss[tss$txid %in% txid.select,]
+# require 500b up and down - I'll filter later
+side <- 5e2
+regs.sub <- tss.sub %>%
+  mutate(start = start - side, end = end + side) %>%
+  arrange(chrom,start,end) %>%
+  mutate(hgnc = ifelse(hgnc == "",".",hgnc))
+nrow(regs.sub)
+```
+
+```{r read_bulk_data, eval = T, include = FALSE, cache=F }
+## first cpg data comparisons
+# read data
+if (! file.exists(cpg_bs_fp)){
+  gpc <- read.bismark(gpc_fp)
+  cpg <- read.bismark(cpg_fp)
+  saveRDS(cpg,cpg_bs_fp)
+  saveRDS(gpc,gpc_bs_fp)
+} else {
+  cpg <- readRDS(cpg_bs_fp)
+  gpc <- readRDS(gpc_bs_fp)
+}
+
+cpg.gr <- granges(cpg)
+gpc.gr <- granges(gpc)
+
+```
+
+
+```{r regs, eval = T, include = FALSE, cache=F }
+# Read or write regions
+regs.fp <- file.path(subdir,"200108_GM12878.tss_regulatory_cgi_overlap_min1.bed")
+#system(paste("rm",regs.fp))
+if (file.exists(regs.fp)) {
+  message("reading region")
+  regs.sub <- read_tsv(regs.fp, col_names = c("chrom","start","end","txid","exp","strand","ensid","hgnc"))
+} else {
+  message("writing region")
+  write_tsv(regs.sub, regs.fp,col_names = F, na = "\"\"")
+}
+
+```
+
+# single-read
+
+```{r single_read_region, eval = T, include = FALSE, cache=F }
+sub.fp = file.path(subdir,"GM12878_nanoNOMe.tss_regulatory_cgi_min1.singleread.cpggpc.meth.bed")
+env.list <- list(
+  bed = regs.fp,
+  sub = sub.fp
+)
+do.call(Sys.setenv,env.list)
+
+```
+
+```{bash single_read_subset}
+export PATH=$HOME/Code/miniconda3/bin:$PATH
+mbed="/uru/Data/Nanopore/projects/nanonome/pooled/mbed/GM12878_nanoNOMe.cpggpc.meth.bed.gz"
+rm $sub
+
+if [ ! -e $sub ]; then
+#  bedtools intersect -b $bed -a $mbed -wa -u -F 1 -sorted > $sub # require complete coverage of the region
+  tabix $mbed -R $bed > $sub
+fi
+```
+
+load single-read data
+
+```{r single_read, eval = T, include = FALSE, cache=F }
+# fetch single read data in this region
+reads <- tabix_mbed(env.list$sub,extcol = "motif",by = "read")
+# separate by mod
+reads.cpg <- reads[reads$motif == "CG",]
+reads.gpc <- reads[reads$motif == "GC",]
+# remove fully methylated gpc reads
+reads.gpc <- remove_fully_methylated(reads.gpc, thr = 0.7)
+```
+
+```{r single_read_calls, eval = T, include = FALSE, cache=F }
+# extend regions out to 10kb 
+cgcalls.list <- list()
+gccalls.list <- list()
+for (i in seq(nrow(regs.sub))) {
+  print(i)
+  reg <- regs.sub[i,] %>%
+    mutate(start = start - 4.5e3, end = end + 4.5e3)
+  cpg.reg <- reads.cpg %>%
+    filter(chrom == reg$chrom, start <= reg$start, end >= reg$end)
+  gpc.reg <- reads.gpc %>%
+    filter(chrom == reg$chrom, start <= reg$start, end >= reg$end)
+  cgcalls <- mbedByCall(cpg.reg,reg,verbose = F)
+  gccalls <- mbedByCall(gpc.reg,reg,verbose = F)
+  if ( length(cgcalls) != 1 ){
+    cgcalls <- cgcalls %>%
+      redo_mcall(1.5)
+  }
+  if (length(gccalls) != 1){
+    gccalls <- gccalls %>%
+      redo_mcall(1)
+  }
+  cgcalls.list[[i]] <- cgcalls
+  gccalls.list[[i]] <- gccalls
+}
+# remove regions with no reads covering the entire region
+keepi <- which(!sapply(cgcalls.list, function(x){is.null(dim(x))}))
+regs.sub <- regs.sub[keepi,]
+cgcalls.list <- cgcalls.list[keepi]
+gccalls.list <- gccalls.list[keepi]
+
+```
+
+
+```{r smooth, eval = T, include = FALSE, cache=F }
+# smoothing GpC
+gcsmooth.list <- list()
+for (i in seq(nrow(regs.sub))) {
+  print(i)
+  reg <- regs.sub[i,]
+  calls.reg <- gccalls.list[[i]] %>%
+    group_by(qname)
+  group_names <- group_keys(calls.reg)$qname
+  calls.list <- calls.reg %>% 
+    group_split(keep = F)
+  names(calls.list) <- group_names
+  smooth.list <- lapply(calls.list,smoothCalls,reg, bandwidth = 40)
+  calls.smooth <- bind_rows(smooth.list,.id = "qname")
+  gcsmooth.list[[i]] <- calls.smooth
+}
+```
+
+```{r calls_annotate, eval = T, include = FALSE, cache=F }
+cgcalls.dist <- list()
+gccalls.dist <- list()
+gcsmooth.dist <- list()
+for (i in seq(nrow(regs.sub))) {
+  print(i)
+  reg <- regs.sub[i,]
+  reginfo <- reg %>% 
+    dplyr::rename(regstart = start, regend = end) %>%
+    dplyr::select( - chrom)
+  center <- (reg$start + reg$end)/2
+  if ( reg$strand == "-" ){
+    dist_sign <- -1
+  } else {
+    dist_sign <- 1
+  }
+  # cg
+  cgcalls <- cgcalls.list[[i]]
+  cgcalls <- cgcalls %>%
+    bind_cols(reginfo[rep(1,nrow(cgcalls)),]) 
+  cgcalls$distance <- dist_sign * (cgcalls$start - center)
+  # gc 
+  gccalls <- gccalls.list[[i]] # smoothed data for gc
+  gccalls <- gccalls %>%
+   bind_cols(reginfo[rep(1,nrow(gccalls)),]) 
+  gccalls$distance <- dist_sign * (gccalls$start - center)
+  # smoothed
+  smoothcalls <- gcsmooth.list[[i]] # smoothed data for gc
+  smoothcalls <- smoothcalls %>%
+   bind_cols(reginfo[rep(1,nrow(smoothcalls)),]) 
+  smoothcalls$distance <- dist_sign * (smoothcalls$start - center)
+  # add to list
+  cgcalls.dist[[i]] <- cgcalls
+  gccalls.dist[[i]] <- gccalls
+  gcsmooth.dist[[i]] <- smoothcalls
+}
+
+```
+#### get runs
+
+```{r gc_runs, eval = T, include = FALSE, cache=F }
+gsmoothruns.list <- list()
+for (i in seq(nrow(regs.sub))){
+  print(i)
+  reg <- regs.sub[i,]
+  center <- IRanges(start = (reg$start + reg$end)/2, width = 1)
+  # smoothed data
+  smooth.reg <- gccalls.dist[[i]]#gcsmooth.list[[i]]
+  # get runs
+  runs <- getRuns(smooth.reg)
+  # combine with region info
+  reginfo <- reg %>%
+    dplyr::rename(regstart = start, regend = end)
+  runs <- bind_cols(runs,reginfo[rep(1,nrow(runs)),])
+  # get distance from center
+  if (reg$strand == "-"){
+    # if strand is neg :
+    start_dist <- start(center) - runs$end
+    end_dist <- start(center) - runs$start
+  } else {
+    start_dist <- runs$start - start(center)
+    end_dist <- runs$end - start(center)
+  }
+  runs$start_dist  <- start_dist
+  runs$end_dist  <- end_dist
+  # add to list
+  gsmoothruns.list[[i]] <- runs
+}
+gcruns <- bind_rows(gsmoothruns.list)
+# get abs values of distance from the center
+gcruns.dist <- gcruns %>%
+  mutate(dist = case_when(
+    start_dist <= 0 & end_dist >= 0 ~ 0,
+    start_dist > 0 ~ start_dist,
+    end_dist < 0 ~ abs(end_dist) 
+    ),
+    lab = paste(qname,txid,sep="_"),
+    acc = ifelse( values == 0, "Closed","Open")
+  )
+```
+
+### ananlysis
+
+classify tss regions
+
+###########################################################
+# EM clustering
+###########################################################
+
+```{r combinatorial_subset, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# subset region
+cgside = 500
+cpg_tss <- bind_rows(lapply(cgcalls.dist,function(x){
+  x[x$distance > -cgside & x$distance < cgside,]
+               }))
+gcside = 100
+gpc_tss <- bind_rows(lapply(gcsmooth.dist,function(x){
+  x[x$distance > -gcside & x$distance < gcside,]
+               }))
+# get average signal
+meth_tss <- bind_rows(list(
+    cpg = cpg_tss, gpc = gpc_tss),.id = "mod")
+meth_avg <- meth_tss %>%
+  group_by(qname,txid,exp,mod) %>%
+  filter(!is.na(mcall), mcall != -1) %>%
+  summarize(mfreq = mean(mcall),
+    n = n())
+# spread
+meth_avg.spread <- meth_avg %>%
+  dplyr::select(-n) %>%
+  spread(mod,mfreq) %>%
+  na.omit()
+meth_avg_labs <- paste(meth_avg.spread$qname, meth_avg.spread$txid,sep="_")
+```
+
+```{r em_clustering, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+modpath <- file.path(subdir,"TSS_combinatorial_cluster_models.rds")
+mods.list <- readRDS(modpath)
+mod.cpg <- mods.list$cpg
+mod.gpc <- mods.list$gpc
+cl.info <- mods.list$info
+
+pred.cpg <- predict(mod.cpg,meth_avg.spread$cpg)
+pred.gpc <- predict(mod.gpc,meth_avg.spread$gpc)
+meth.cluster <- meth_avg.spread %>%
+  ungroup() %>%
+  mutate(
+    cpg_cluster = factor(pred.cpg$classification),
+    gpc_cluster = factor(pred.gpc$classification),
+    cluster = paste(cpg_cluster,gpc_cluster,sep="_"),
+    lab = cl.info$lab[match(cluster,cl.info$cluster)]
+  )
+meth.cluster$cpg_prob <- sapply(seq(nrow(meth.cluster)),function(i){
+  pred.cpg$z[i,meth.cluster$cpg_cluster[i]]})
+meth.cluster$gpc_prob <- sapply(seq(nrow(meth.cluster)),function(i){
+  pred.gpc$z[i,meth.cluster$gpc_cluster[i]]})
+meth.cluster <- meth.cluster %>%
+  mutate(sig = ifelse(cpg_prob > 0.75 & gpc_prob > 0.75,"Significant","Insignificant"))
+table(meth.cluster$sig)
+
+cluster.sum <- meth.cluster %>%
+  filter(sig == "Significant") %>%
+  group_by(txid,cluster) %>%
+  summarize(n =n()) %>%
+  spread(cluster,n) %>%
+  replace(is.na(.),0) %>%
+  mutate(total = `1_1`+`1_2`+`2_1`+`2_2`)  %>%
+  gather(cluster, n,-txid,-total) %>%
+  mutate(frac = n/total, 
+    lab = cl.info$lab[match(cluster,cl.info$cluster)])
+
+```
+```{r pick_regions, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+# let's filter out regions with high fraction of one cluser
+highfilter <- cluster.sum %>%
+  filter( frac < 0.7) %>%
+  dplyr::select(-lab,-frac) %>%
+  spread(cluster,n) %>%
+  na.omit()
+# then only those with at least 10 reads in two groups - just between the "poised" vs "active" states
+lowfilter.tb <- highfilter %>%
+  gather(cluster,n,`1_1`,`1_2`) %>%
+  filter(n >= 5) %>%
+  group_by(txid) %>%
+  summarize( n = n()) %>%
+  filter( n > 1)
+lowfilter <- lowfilter.tb$txid
+length(lowfilter)
+summary(lowfilter.tb$n)
+```
+
+```{r cluster_avg_meth, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+diff.list <- list()
+regulreg.list <- list()
+#plotpath <- file.path(plotdir,"200129_gm_regulatory_cluster_regionplot.pdf")
+#pdf(plotpath,width = 4, height = 3, useDingbats = F)
+for (i in seq_along(lowfilter)){
+  print(i)
+  txid <- lowfilter[i]
+  regidx <- which(regs.sub$txid %in% txid)
+  # change reg to 10kb
+  reg.1kb <- regs.sub[regidx,] 
+  reg <- reg.1kb %>%
+    mutate(start = start - 4.5e3, end = end + 4.5e3)
+  tss <- (reg$start + reg$end) /2
+  cl.reg <- meth.cluster[meth.cluster$txid %in% txid,] %>%
+    filter(cluster %in% c("1_1","1_2"))
+  # regulatory regions in this area
+  regulatory.reg <- regul.distant[overlapsAny(regul.distant,GRanges(reg)),]
+  # get data and assign cluster
+  cpg.reg <- cgcalls.dist[[regidx]] %>%
+    mutate(cluster = cl.reg$lab[match(qname,cl.reg$qname)])
+  gpc.reg <- gcsmooth.dist[[regidx]] %>%
+    mutate(cluster = cl.reg$lab[match(qname,cl.reg$qname)])
+  # get average per group
+  cpg.meth <- cpg.reg %>%
+    filter(!is.na(mcall)) %>%
+    group_by(start,cluster) %>%
+    summarize( cov = n(), meth= sum(mcall)) %>%
+    na.omit() %>%
+    filter(cov > 3) %>%
+    mutate( freq = meth/cov)
+  # smooth?
+  M <- cpg.meth %>%
+    dplyr::select(-cov,-freq) %>%
+    spread(cluster,meth) %>%
+    replace(is.na(.),0)
+  cov <- cpg.meth %>%
+    dplyr::select(-meth,-freq) %>%
+    spread(cluster,cov)  %>%
+    replace(is.na(.),0)
+  cpg.bs <- BSseq(M = as.matrix(M[,-1]),Cov = as.matrix(cov[,-1]), pos = M$start, chr = reg$chrom)
+  bpparam = MulticoreParam(workers = 1, progressbar = TRUE)
+  cpg.bs <- BSmooth(cpg.bs,ns = 10, BPPARAM = bpparam,h = 500)
+  # gpc
+  gpc.meth <- gpc.reg %>%
+    filter(!is.na(mcall), !mcall == -1) %>%
+    group_by(start,cluster) %>%
+    summarize( cov = n(), meth= sum(mcall)) %>%
+    na.omit() %>%
+    filter(cov > 3) %>%
+    mutate( freq = meth/cov)
+  M <- gpc.meth %>%
+    dplyr::select(-cov,-freq) %>%
+    spread(cluster,meth) %>%
+    replace(is.na(.),0)
+  cov <- gpc.meth %>%
+    dplyr::select(-meth,-freq) %>%
+    spread(cluster,cov)  %>%
+    replace(is.na(.),0)
+  gpc.bs <- BSseq(M = as.matrix(M[,-1]),Cov = as.matrix(cov[,-1]), pos = M$start, chr = reg$chrom)
+  gpc.bs <- BSmooth(gpc.bs,ns = 10, h = 200, BPPARAM = bpparam)
+  findOverlaps(gpc.bs,regulatory.reg)
+  # call dmrs
+#  regul.tb <- as_tibble(regulatory.reg) %>% dplyr::rename(chr = seqnames)
+#  cpg.diff <- compareRegions(cpg.bs,1,2,regul.tb)
+#  gpc.diff <- compareRegions(gpc.bs,1,2,regul.tb)
+  dmrs <- findDMRs(cpg.bs,1,2,qcutoffs = c(0.1,0.9))
+  dars <- findDMRs(gpc.bs,1,2,qcutoffs = c(0.1,0.9))
+  clusters <- sampleNames(cpg.bs)
+  regulreg.list[[i]] <- regulatory.reg 
+  diff.list[[i]] <- bind_rows(list(
+    cpg = dmrs, gpc = dars
+  ), .id = "mod") %>%
+  mutate(one = clusters[1], two = clusters[2]) %>%
+  filter(end <= reg.1kb$start | start >= reg.1kb$end) # remove those that overlap the 1kb region 
+  # plot if dmrs/dars overlap with regulatory region
+  ovl_num <- sum(overlapsAny(GRanges(dmrs),GRanges(regulatory.reg))) + 
+    sum(overlapsAny(GRanges(dars),GRanges(regulatory.reg))) 
+#  if (ovl_num > 0) {
+#    cpg.meth <- as_tibble(getMeth(cpg.bs)) %>%
+#      mutate(start = start(cpg.bs)) %>%
+#      gather(cluster,freq, - start)
+#    gpc.meth <- as_tibble(getMeth(gpc.bs)) %>%
+#      mutate(start = start(gpc.bs)) %>%
+#      gather(cluster,freq, - start)
+#    meth.tb <- bind_rows(list(cpg = cpg.meth,gpc = gpc.meth),.id = "mod")
+#    g <- ggplot(meth.tb,aes(x = start, y = freq, color = cluster)) +
+#      facet_wrap(~mod, nrow = 2) +
+#    #  geom_point() +
+#      geom_line() + 
+#      geom_vline(xintercept= tss) +
+#      geom_rect(inherit.aes = F, data = regulatory.reg, mapping = aes(xmin = start, xmax = end, fill = type),
+#                ymin = -Inf, ymax = Inf, alpha = 0.2) +
+#      theme(legend.position = "bottom") +
+#      lims(y = c(0,1)) +
+#      geom_rug(sides = "b", color = "black", alpha = 0.2)
+#    print(g)
+#  }
+}
+  
+#dev.off()
+```
+
+```{r dmrs_regulatory, eval = T, echo = F, fig.height=6, fig.width=8, message=F, warning = F,results = 'hide', fig.show = 'show'}
+regul.reg <- do.call(c,regulreg.list)
+diff.tb <- bind_rows(diff.list,.id = "idx") 
+# make sure one and two are same
+diff.cpg <- diff.tb %>%
+  filter(mod == "cpg",
+    sig == "sig"
+  ) 
+diff.gpc <- diff.tb %>%
+  filter(mod == "gpc",
+    sig == "sig"
+  ) 
+diff.exp <- diff.gpc %>%
+  group_by(idx,direction) %>%
+  summarize(n = n()) %>%
+  ungroup() %>%
+  mutate(
+    idx = as.numeric(idx),
+    txid = lowfilter[idx],
+    exp = regs.sub$exp[match(txid,regs.sub$txid)]
+  ) %>%
+  spread(direction,n) %>%
+  replace(is.na(.),0) 
+diff.exp %>%
+  mutate(more = ifelse(up > down, "two","one")) %>%
+  group_by(exp,more) %>%
+  summarize(n = n())
+
+  
+
+table(diff.cpg$direction)
+table(diff.gpc$direction)
+
+# overlap cpg and gpc?
+cpg.gr <- GRanges(diff.cpg)
+gpc.gr <- GRanges(diff.gpc)
+ovl <- findOverlaps(cpg.gr,gpc.gr)
+diff.ovl <- diff.cpg[queryHits(ovl),]
+
+# reassign significance
+diff.sig <- diff.ovl %>%
+  filter(sig == "sig")
+nrow(diff.sig)
+
+regul.gr <- GRanges(regul.reg)
+diff.gr <- GRanges(diff.sig)
+
+# enrichment?
+ovl <- overlapsAny(diff.gr,regul.gr)
+table(ovl)
+# total size of the regions looked at is 9e3 * number of region
+totsize <- 9e3 * length(diff.list)
+regulsize <- sum(width(regul.gr))
+regulsize/totsize
+sum(ovl)/length(ovl)
+
+```

@@ -1,0 +1,506 @@
+---
+title: "0727_SD_meth"
+author: "G$"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(mclust)
+library(ggridges)
+```
+
+```{r data, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly/sd/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly"
+
+chm13 <- readRDS(paste0(dat, "/ref/chm13_200bpCpG_cov_200_CpG_num.rds"))
+
+inter <- read_tsv(paste0(dat, "/sd/inter.only.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+intra <- read_tsv(paste0(dat, "/sd/intra.only.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+```
+
+
+```{r functions, include=F}
+CalculateCpG <- function (obj, ..., step, as.prob = TRUE) 
+{
+    require(BSgenome)
+    seqs <- getSeq(obj, ..., as.character = FALSE)
+    if (missing(step)) {
+        res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,7]
+    }
+    else {
+        res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, 2, step = step, as.prob = as.prob)[,7])
+        if (length(res) == 1) 
+            res <- unlist(res)
+    }
+    res
+}
+
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend) }
+
+smoothplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA)) %>%
+  mutate(meth = rollmean(meth, 200, fill = NA))
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(cen, aes(x=smooth, y = meth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,15)+theme(legend.position = c(0.8, 0.2))+theme_classic()+ylim(0,1)
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+prettyplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA))
+
+p <- ggplot(cen, aes(x=smooth, y = meth))+
+  geom_bin2d(aes(fill=..count..)) +
+  scale_fill_gradientn(colours = pal)+
+  theme_classic()+xlim(0,20)+theme(legend.position = c(0.8, 0.2))
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+ovls<-function(gr1, gr2){
+  keepi <- findOverlaps(gr1, gr2)
+freq.matched <- gr1[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(gr2[subjectHits(keepi)]))
+
+df <- as.data.frame(freq.matched)
+return(df)
+}
+
+
+
+ovls_chunked <-function(gr1, gr2){
+  keepi <- findOverlaps(gr1, gr2)
+freq.matched <- gr1[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(gr2[subjectHits(keepi)]))
+
+df <- as.data.frame(freq.matched) %>%
+  group_by(seqnames, start, end, width) %>%
+  summarise(meth = mean(meth), 
+            cov = mean(as.numeric(cov)), 
+            CpG = mean(CpG))
+
+return(df)
+}
+
+chunkplot <-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(cen, aes(x=CpG, y = meth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,15)+theme(legend.position = "bottom")+theme_classic()+ylim(0,1)+theme(text = element_text(size = 30))+labs(x = "CpG density", y = "Methylation frequency")
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(CpG)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+```
+
+## inter vs intra chromosomal SDs
+
+```{r intravsinter, include=F}
+inter.gr <- GRanges(inter)
+
+
+inter_meth.gr <- ovls_chunked(inter.gr, chm13)%>%
+  mutate(id = "inter")
+
+intra.gr <- GRanges(intra)
+
+
+
+intra_meth.gr <- ovls_chunked(intra.gr, chm13)%>%
+  mutate(id = "intra")
+
+
+p1 <- chunkplot(inter_meth.gr)
+p2 <- chunkplot(intra_meth.gr)
+
+
+all <- rbind(inter_meth.gr,intra_meth.gr)
+
+
+p3 <- ggplot(data= all, aes(meth,id))+geom_density_ridges()+theme(text = element_text(size=40))+xlim(-.2,1.2)
+
+
+p4 <- ggplot(data= all, aes(CpG,id))+geom_density_ridges()+xlim(0,15)+theme(text = element_text(size=40))
+
+
+```
+
+```{r plot4, echo=F,fig.height=12, fig.width=28}
+plot_grid(p1, p2, labels = c('Inter', 'Intra'), label_size = 40)
+plot_grid(p3, p4, labels = c('Methylation', 'CpG density'), label_size = 40,label_x = .5, label_y = 1)
+
+```
+# flanking vs SD 
+```{r flanks, include=F}
+flanks_block <- read_tsv(paste0(dat, "/sd/scripts/blocks.with.flanks_20kb.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+
+flanks <- read_tsv(paste0(dat, "/sd/scripts/flanks_20kb.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+
+flanks_block.gr <- GRanges(flanks_block)
+
+
+flanks.gr <- GRanges(flanks)
+
+SD_meth.gr <- ovls_chunked(flanks_block.gr, chm13) %>%
+  mutate(id = "SD")
+
+flanks_meth.gr <- ovls_chunked(flanks.gr, chm13) %>%
+  mutate(id = "flank")
+
+flank_all <- rbind(SD_meth.gr,flanks_meth.gr)
+
+p3 <- chunkplot(flanks_meth.gr)
+p4 <- chunkplot(SD_meth.gr)
+
+p15 <- ggplot(data= flank_all, aes(meth,id))+geom_density_ridges()+theme(text = element_text(size=40))+xlim(-.2,1.2)
+
+
+p16 <- ggplot(data= flank_all, aes(CpG,id))+geom_density_ridges()+xlim(0,15)+theme(text = element_text(size=40))
+
+```
+
+```{r plot1, echo=F,fig.height=12, fig.width=28}
+plot_grid(p3, p4, labels = c('Flanks', 'SD_blocks'), label_size = 40)
+plot_grid(p15, p16, labels = c('Methylation', 'CpG density'), label_size = 40,label_x = .5, label_y = 1)
+
+```
+
+
+```{r identity, include = F}
+high_id <- read_tsv(paste0(dat, "/sd/highid.only.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+
+high_id.gr <- GRanges(high_id)
+
+low_id <- read_tsv(paste0(dat, "/sd/lowid.only.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+
+low_id.gr <- GRanges(low_id)
+
+high_id_meth.gr <- ovls_chunked(high_id.gr, chm13) %>%
+  mutate(id = "high")
+low_id_meth.gr <- ovls_chunked(low_id.gr, chm13) %>%
+  mutate(id = "low")
+
+
+p5 <- chunkplot(high_id_meth.gr)
+p6 <- chunkplot(low_id_meth.gr)
+
+id_dat <- rbind(high_id_meth.gr, low_id_meth.gr)
+
+p7 <- ggplot(data= id_dat, aes(meth,id))+geom_density_ridges()+theme(text = element_text(size=40))+xlim(-.2,1.2)
+
+
+p8 <- ggplot(data= id_dat, aes(CpG,id))+geom_density_ridges()+xlim(0,15)+theme(text = element_text(size=40))
+
+```
+
+# percent identity
+```{r plot3, echo=F,fig.height=12, fig.width=28}
+plot_grid(p5, p6, labels = c('high', 'low'), label_size = 40)
+
+plot_grid(p7, p8, labels = c('Methylation', 'CpG density'), label_size = 40,label_x = .5, label_y = 1)
+
+```
+
+
+```{r copynum, include=F}
+
+high_num <- read_tsv(paste0(dat, "/sd/high.copynumber.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+
+high_num.gr <- GRanges(high_num)
+
+low_num <- read_tsv(paste0(dat, "/sd/low.copynumber.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+
+low_num.gr <- GRanges(low_num)
+
+high_num_meth.gr <- ovls_chunked(high_num.gr, chm13) %>%
+  mutate(id = "high")
+low_num_meth.gr <- ovls_chunked(low_num.gr, chm13) %>%
+  mutate(id = "low")
+
+
+p9 <- chunkplot(high_num_meth.gr)
+p10 <- chunkplot(low_num_meth.gr)
+
+id_dat <- rbind(high_num_meth.gr, low_num_meth.gr)
+
+p11 <- ggplot(data= id_dat, aes(meth,id))+geom_density_ridges()+theme(text = element_text(size=40))
+
+
+p12 <- ggplot(data= id_dat, aes(CpG,id))+geom_density_ridges()+xlim(0,15)+theme(text = element_text(size=40))
+
+
+```
+
+# Copy number
+```{r plot5, echo=F,fig.height=12, fig.width=28}
+plot_grid(p9, p10, labels = c('high', 'low'), label_size = 40)
+
+plot_grid(p11, p12, labels = c('Methylation', 'CpG density'), label_size = 40,label_x = .5, label_y = 1)
+
+```
+
+# Genic vs not genic
+```{r genic, include=F}
+gene <- read_tsv(paste0(dat, "/sd/sd.with.genes.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+
+gene.gr <- GRanges(gene)
+
+nogene <- read_tsv(paste0(dat, "/sd/sd.without.genes.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+
+nogene.gr <- GRanges(nogene)
+
+gene_meth.gr <- ovls_chunked(gene.gr, chm13) %>%
+  mutate(id = "gene")
+nogene_meth.gr <- ovls_chunked(nogene.gr, chm13) %>%
+  mutate(id = "no_gene")
+
+
+p9 <- chunkplot(gene_meth.gr)
+p10 <- chunkplot(nogene_meth.gr)
+
+id_dat <- rbind(gene_meth.gr, nogene_meth.gr)
+
+p11 <- ggplot(data= id_dat, aes(meth,id))+geom_density_ridges()+theme(text = element_text(size=40))
+
+
+p12 <- ggplot(data= id_dat, aes(CpG,id))+geom_density_ridges()+xlim(0,15)+theme(text = element_text(size=40))
+
+
+```
+
+# SD genes
+```{r plot6, echo=F,fig.height=12, fig.width=28}
+plot_grid(p9, p10, labels = c('gene', 'no gene'), label_size = 40)
+
+plot_grid(p11, p12, labels = c('Methylation', 'CpG density'), label_size = 40,label_x = .5, label_y = 1)
+
+```
+
+```{r flankline, echo = F}
+
+chromsizes <- read_tsv(paste0(dat, "/ref/t2t-chm13.20200727.fasta.fai"),col_names = c("chrom","size"))
+flank <- read_tsv(paste0(dat, "/sd/blocks.with.flanks.nowindows.bed"), col_names = F) %>%
+  dplyr::rename("chr" = 1, "start" =2, "end" =3) %>%
+  mutate(len = end-start)%>%
+  mutate(begin = start) %>%
+  mutate(last=end)
+  
+
+shuf_before <- flank %>%
+  rowwise() %>%
+  mutate(start_before = start - 50000) %>%
+  mutate(begin = start) %>%
+  select(c(chr, start_before, start,begin)) %>%
+  dplyr::rename("start" = start_before, "end" = start) %>%
+  mutate(region = "ahead")
+
+shuf_before.gr <- GRanges(shuf_before)
+
+before.gr <- ovls(chm13, shuf_before.gr) %>%
+  mutate(pos_start = start - begin) %>%
+  group_by(pos_start) %>%
+  summarize(CpG = median(CpG), meth = median(meth))%>%
+  rename(pos_start = "pos")
+
+shuf_after <- flank %>%
+  rowwise() %>%
+  mutate(end_after = end + 50000) %>%
+  mutate(point = end) %>%
+  select(c(chr, end, end_after,point)) %>%
+  dplyr::rename("end" = end_after, "start" = end) %>%
+  mutate(region = "behind")
+
+shuf_after.gr <- GRanges(shuf_after)
+
+after.gr <- ovls(chm13, shuf_after.gr) %>%
+  mutate(pos_end = (start - point)) %>%
+  group_by(pos_end) %>%
+  summarize(CpG = median(CpG), meth = median(meth)) %>%
+  rename(pos_end = "pos") 
+
+#middle <-  read_tsv(paste0(dat, "/sd/blocks.with.flanks.bed"), col_names = F) %>%
+#  dplyr::rename("chr" = 1, "start" =2, "end" =3) %>%
+#  mutate(begin = start)
+
+middle.gr <- GRanges(flank)
+
+middle_meth.gr <- ovls(chm13, middle.gr) %>%
+  mutate(pos = start - begin) %>%
+  group_by(pos) %>%
+  summarize(CpG = median(CpG), meth = median(meth)) %>%
+  select(c(pos, CpG, meth))
+
+
+before <- rbind(before.gr,middle_meth.gr) %>%
+  arrange(pos) %>%
+  mutate(meth_smooth = rollmean(meth, 200, fill = NA)) %>%
+  mutate(CG_smooth = rollmean(CpG, 1000, fill = NA))
+
+
+
+p1 <- ggplot(before, aes(pos, meth_smooth))+geom_line()+ylim(0,1)+geom_vline(xintercept = 0, linetype = "dashed")+theme_classic()+geom_smooth()+xlim(-50000,50000)
+
+
+middle_meth.gr <- ovls(chm13, middle.gr) %>%
+  mutate(pos = end - last) %>%
+  filter(pos > -50000) %>%
+  group_by(pos) %>%
+  summarize(CpG = median(CpG), meth = median(meth)) %>%
+  select(c(pos, CpG, meth))
+
+after <- rbind(after.gr,middle_meth.gr) %>%
+  arrange(pos) %>%
+  mutate(meth_smooth = rollmean(meth, 200, fill = NA)) %>%
+  mutate(CG_smooth = rollmean(CpG, 1000, fill = NA))
+
+p2 <- ggplot(after, aes(pos, meth_smooth))+geom_line()+ylim(0,1)+geom_vline(xintercept = 0, linetype = "dashed")+theme_classic()+geom_smooth()+xlim(-50000,50000)
+
+plot_grid(p1, p2, labels = c('Ahead Flank', 'After Flank'), label_size = 40,label_x = .5, label_y = 1)
+
+```
+
+```{r genes_compare, include=F}
+#gffRangedData<-import.gff(paste0(dat, "/liftoff/hg38_genes_t2t_liftoff.gtf")) 
+#genes <- gffRangedData[gffRangedData$type == "gene" ]
+#
+#TSS <- start(resize(genes, 1))
+#upstream <- TSS - 2000
+#
+#mcols(genes) <- cbind.data.frame(
+#    mcols(genes),
+#    TSS, upstream)
+#
+#
+#upstream_tss <- as.data.frame(genes) %>%
+#  mutate(end = TSS) %>%
+#  mutate(start = upstream)
+#  
+#genes.gr <-as(upstream_tss, "GRanges")
+#
+#flank <- read_tsv(paste0(dat, "/sd/blocks.with.flanks.nowindows.bed"), col_names = F) %>%
+#  dplyr::rename("chr" = 1, "start" =2, "end" =3)
+#
+#sd.gr <- GRanges(flank)
+#SD_genes <- ovls(genes.gr,sd.gr)
+#SD_genes.gr <- GRanges(SD_genes)
+#SD_genes_meth.gr <- ovls_chunked(SD_genes.gr,chm13)
+#
+#p3 <- chunkplot(SD_genes_meth.gr)
+#p3
+#
+#
+#
+#nokeep <- findOverlaps(sd.gr, genes.gr)
+#freq.matched <- genes.gr[!queryHits(nokeep)]
+#
+#mcols(freq.matched) <- cbind.data.frame(
+#    mcols(freq.matched),
+#    mcols(sd.gr[!subjectHits(nokeep)]))
+#
+#df <- as.data.frame(freq.matched)
+#
+```
+

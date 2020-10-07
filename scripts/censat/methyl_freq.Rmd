@@ -189,19 +189,19 @@ reps.gr <- GRanges(as.data.frame(reps))
 
 rep_meth <- ovls(chm13, reps.gr)
 
-p <- prettyplot(rep_meth)
-
-ggsave(
-  paste0(figs, "/","repeats_methyl_heatmap.pdf"),
-  plot = p,
-  scale = 1,
-  width = 12,
-  height = 9,
-)
+#p <- prettyplot(rep_meth)
+#
+#ggsave(
+#  paste0(figs, "/","repeats_methyl_heatmap.pdf"),
+#  plot = p,
+#  scale = 1,
+#  width = 12,
+#  height = 9,
+#)
 
 #types <- levels(as.factor(rep_meth$rep_type))
 types = c("LINE", "Low_complexity", "LTR", "tRNA", "rRNA", "RC", "Satellite", "Simple_repeat", "DNA", "Retroposon")
-
+type="Retroposon"
 for (i in 1:length(types)){
   sub <- types[i]
   
@@ -211,7 +211,7 @@ HOR <- rep_meth %>%
 p <- smoothplot(HOR)
 
 ggsave(
-  paste0(figs, "/",sub,"_methyl_smooth.pdf"),
+  paste0(figs, "/",sub,"_methyl_smoothmap.pdf"),
   plot = p,
   scale = 1,
   width = 12,

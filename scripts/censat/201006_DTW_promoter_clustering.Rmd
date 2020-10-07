@@ -1,0 +1,435 @@
+---
+title: "201006_DTW_promoter_clustering"
+author: "G$"
+output:
+  pdf_document: default
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+# validation of using Dynamic Time Warping (DTW) for methylation based clustering of promoters on the X chromosome for Xi Xa phasing
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(mclust)
+library(ggridges)
+library(dtw)
+library(TSclust)
+library(gridExtra)
+library("dtwclust")
+library("rtracklayer")
+```
+
+```{r functions, include=F}
+CalculateCpG <- function (obj, ..., step, as.prob = TRUE) 
+{
+    require(BSgenome)
+    seqs <- getSeq(obj, ..., as.character = FALSE)
+    if (missing(step)) {
+        res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,7]
+    }
+    else {
+        res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, 2, step = step, as.prob = as.prob)[,7])
+        if (length(res) == 1) 
+            res <- unlist(res)
+    }
+    res
+}
+
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend) }
+
+smoothplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA)) %>%
+  mutate(meth = rollmean(meth, 200, fill = NA))
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(cen, aes(x=smooth, y = meth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,15)+theme(legend.position = c(0.8, 0.2))+theme_classic()+ylim(0,1)
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+prettyplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA))
+
+p <- ggplot(cen, aes(x=smooth, y = meth))+
+  geom_bin2d(aes(fill=..count..)) +
+  scale_fill_gradientn(colours = pal)+
+  theme_classic()+xlim(0,20)+theme(legend.position = c(0.8, 0.2))
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+ovls<-function(gr1, gr2){
+  keepi <- findOverlaps(gr1, gr2, type = "any")
+freq.matched <- gr1[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(gr2[subjectHits(keepi)]))
+
+df <- as.data.frame(freq.matched)
+return(df)
+}
+
+
+
+ovls_chunked <-function(gr1, gr2){
+  keepi <- findOverlaps(gr1, gr2)
+freq.matched <- gr1[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(gr2[subjectHits(keepi)]))
+
+df <- as.data.frame(freq.matched) %>%
+  group_by(seqnames, start, end, width) %>%
+  summarise(meth = mean(meth), 
+            cov = mean(as.numeric(cov)), 
+            CpG = mean(CpG))
+
+return(df)
+}
+
+chunkplot <-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(cen, aes(x=CpG, y = meth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,15)+theme(legend.position = "bottom")+theme_classic()+ylim(0,1)+theme(text = element_text(size = 30))+labs(x = "CpG density", y = "Methylation frequency")
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(CpG)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+order_reads_facet <- function(x,offset = 0, bounds=NULL, qorder = NULL){
+  # get boundaries of reads if not provided
+  if (is.null(bounds)){
+    bounds <- x %>% group_by(qname, clust) %>%
+      summarize(start = min(start),
+                end = max(end))
+    # label y based on order of smallest start
+    # if q order is given, use this to order
+    if (!is.null(qorder)) {
+      bounds <- bounds %>%
+        mutate(qname = factor(qname,levels = qorder)) %>%
+        arrange(qname) 
+    } else {
+      bounds<- bounds %>% 
+        arrange(start, end) 
+    }
+    bounds <- bounds %>%
+      ungroup() %>%
+      group_by(clust) %>%
+        mutate(
+          readi = row_number(),
+          ymin = -readi - 0.8 - offset, 
+          ymax = ymin + 0.6)
+  }
+  
+  x <- x %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  bounds <- bounds %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  return(list(x = x,bounds = bounds))
+}
+```
+
+
+```{r data, include=F}
+
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly"
+
+
+reps <- read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727_repeatmasker.out.bed") ,col_names= F) %>%
+  select(X1, X2, X3, X4, X7, X8) %>%
+  dplyr::rename("chr" = X1, "start" = X2, "end" = X3, "name" = X4, "rep_type" = X7, "sub_type" =X8) %>%
+  mutate(len = end - start) %>%
+  mutate(ID = row_number())
+
+chm13 <- readRDS(paste0(dat, "/ref/chm13_200bpCpG_cov_200_CpG_num.rds"))
+
+sizes <- read_tsv(paste0(dat, "/ref/t2t-chm13.20200727.fasta.fai"), col_names = c("chr", "size"))
+
+reads <- tabix_mbed(paste0(dat, "/whole_genome/chrX_CpG_methylation.bed"),extcol = "motif",by = "read") 
+
+CGI <- import.gff(paste0(dat, "/CGIs/chrx.gff")) 
+gffRangedData<-import.gff(paste0(dat, "/liftoff/hg38_genes_t2t_liftoff.gtf")) 
+genes <- gffRangedData[gffRangedData$type == "gene" ]
+
+```
+
+# First validate DTW on a single promoter that we were able to phase based on EM clustering (Xist)
+
+```{r practice_clust, include=F}
+
+# coordinates for CG island at Xist promoter
+chr="chrX"
+phase_start=72277709
+phase_end=72280111
+
+# only use reads longer than 50kb to ensure mappability to repeats but also to phase larger regions
+size_sel <- reads %>%
+  dplyr::mutate(rlen = end-start) %>%
+  filter(rlen >= 50000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  distinct()
+
+
+mat <- cgcalls %>%
+  filter(start >phase_start ) %>%
+  filter(end < phase_end) %>%
+  select(c(qname, start, mcall)) %>%
+  spread(start, mcall)
+
+mat <- mat  %>%
+column_to_rownames("qname")
+  
+# some calls are missing - these are NA, clustering doesn't like NA, replace with .5 (not sure if there is a better way -- circle back here)
+mat[is.na(mat)] <- -1
+
+mat2 <- cgcalls %>%
+  filter(start >phase_start ) %>%
+  filter(end < phase_end) %>%
+  select(c(qname, start, mcall))  %>%
+  rename(qname = "type_col")
+
+# some calls are missing - these are NA, clustering doesn't like NA, replace with .5 (not sure if there is a better way -- circle back here)
+mat2[is.na(mat2)] <- -1
+
+dtw_dist <- function(x){dist(x, method="DTW")}
+mat_dist <- dtw_dist(mat)
+```
+
+```{r cluster_plot, echo=F}
+ mat %>%
+   as.matrix() %>% 
+   gplots::heatmap.2 (
+    # dendrogram control
+    distfun = dtw_dist,
+    hclustfun = hclust,
+    dendrogram = "row",
+    Rowv = T,
+    labRow = T
+  )
+```
+
+
+```{r dtw_clust_practice, fig.width=10, fig.height=25}
+# based on this blog post:
+#https://damien-datasci-blog.netlify.app/post/time-series-clustering-with-dynamic-time-warp/
+
+# cluster analysis
+#dist_ts <- TSclust::diss(SERIES = t(mat), METHOD = "DTWARP") # note the dataframe must be transposed
+
+hc <- stats::hclust(mat_dist, method="complete") # method can be also "average" or diana (for DIvisive ANAlysis Clustering)
+hc
+# k for cluster which is 2 in our case (classic vs. wall)
+hclus <- stats::cutree(hc, k = 2) %>% # hclus <- cluster::pam(dist_ts, k = 2)$clustering has a similar result
+  as.data.frame(.) %>%
+  dplyr::rename(.,cluster_group = .) %>%
+  tibble::rownames_to_column("type_col")
+
+hcdata <- ggdendro::dendro_data(hc)
+names_order <- hcdata$labels$label
+# Use the folloing to remove labels from dendogram so not doubling up - but good for checking hcdata$labels$label
+
+p1 <- hcdata %>%
+  ggdendro::ggdendrogram(., rotate=TRUE, leaf_labels=FALSE)
+
+mat2 <- cgcalls %>%
+  filter(start >phase_start ) %>%
+  filter(end < phase_end) %>%
+  select(c(qname, start, mcall)) 
+
+p2 <- mat2 %>%
+ # rownames_to_column("type_col") %>%
+  #tidyr::gather(type_col, cols) %>%
+  dplyr::full_join(hclus, by = "type_col") %>% 
+  mutate(type_col = factor(type_col, levels = rev(as.character(names_order)))) %>% 
+  ggplot(aes(x = start, y = mcall, colour = cluster_group)) +
+  geom_line() +
+  facet_wrap(~type_col, ncol = 1, strip.position="left") + 
+  guides(color=FALSE) +
+  theme_bw() + 
+  theme(strip.background = element_blank(), strip.text = element_blank())
+
+gp1<-ggplotGrob(p1)
+gp2<-ggplotGrob(p2) 
+
+grid.arrange(gp2, gp1, ncol=2, widths=c(4,2))
+
+```
+
+
+
+```{r CGIs, include=F}
+
+# only keep if overlap a gene
+CGI_genes <- ovls(CGI, genes)
+
+# remove if overlap SINE, SVA or LINE
+TEs <- c("SINE", "LINE", "LTR")
+alu <- read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727_repeatmasker.out.bed") ,col_names= F) %>%
+  select(X1, X2, X3, X4, X7, X8) %>%
+  dplyr::rename("chr" = X1, "start" = X2, "end" = X3, "name" = X4, "rep_type" = X7, "sub_type" =X8) %>%
+  mutate(len = end - start) %>%
+  filter(chr == "chrX") %>%
+  filter(rep_type %in% TEs) %>%
+  mutate(ID = row_number())
+
+alu.gr <- GRanges(alu)
+
+CGI_remove <- subsetByOverlaps(GRanges(CGI_genes), alu.gr)
+CGI_genes_filtered <- CGI_genes %>%
+  filter(!ID %in% CGI_remove$ID)
+
+# if closer than 100bp merge <- come back to this 
+#distanceToNearest(GRanges(CGI_genes_filtered))
+
+
+all_phased=data.frame()
+for (i in 1:length(CGI_genes_filtered$start)){
+ 
+  cgcalls_sub <- cgcalls %>%
+  filter(start > (CGI_genes_filtered$start[i])) %>%
+  filter(start < (CGI_genes_filtered$end[i])) %>%
+  select(c(qname, start,mcall)) 
+  
+  # sometimes there are duplicate read IDs -- I don't really know how to handle this - remove read if read ID appears more than once 
+  
+  check <- cgcalls_sub %>%
+    group_by(qname, start) %>%
+    select(qname, start) %>%
+    mutate(num_rows = sum(n())) %>%
+    filter(num_rows > 1) %>%
+    ungroup() %>%
+    select(qname) %>%
+    distinct()
+  
+  
+  # remove read if all NAs
+  mat <- cgcalls_sub %>%
+    filter(!qname %in% check$qname ) %>%
+    spread(start, mcall) %>%
+    column_to_rownames("qname") %>%
+    filter_all(any_vars(!is.na(.)))
+  
+
+  
+  mat[is.na(mat)] <- -1
+  mat_dist <- dtw_dist(mat)
+  
+  hc <- stats::hclust(mat_dist, method="complete")
+  hclus <- stats::cutree(hc, k = 2) %>% # hclus <- cluster::pam(dist_ts, k = 2)$clustering has a similar result
+  as.data.frame(.) %>%
+  dplyr::rename(.,cluster_group = .) %>%
+  tibble::rownames_to_column("type_col")
+  
+  num=mean(hclus$cluster_group)
+  if ((between(num,1.35, 1.65))) { 
+  print(i)
+  
+  reg = "het"
+  } else{reg = "hom"}
+  
+  start = CGI_genes_filtered$start[i]
+  end = CGI_genes_filtered$end[i]
+  phased = data.frame(start, end, reg)
+    
+  
+  all_phased <- rbind(phased, all_phased)
+  
+  }
+
+
+```
+
+```{r}
+write.table(all_phased, file = paste0(dat, "/CGIs/phased_CGIs.tsv"),quote = F, sep = "\t",
+            eol = "\n", na = "NA", dec = ".", row.names = F,
+            col.names = TRUE)
+```
+
