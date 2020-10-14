@@ -245,8 +245,8 @@ genes <- gffRangedData[gffRangedData$type == "gene" ]
 
 # coordinates for CG island at Xist promoter
 chr="chrX"
-phase_start=72277709
-phase_end=72280111
+phase_start=153614089
+phase_end=153614210
 
 # only use reads longer than 50kb to ensure mappability to repeats but also to phase larger regions
 size_sel <- reads %>%
@@ -324,22 +324,22 @@ mat2 <- cgcalls %>%
   filter(end < phase_end) %>%
   select(c(qname, start, mcall)) 
 
-p2 <- mat2 %>%
- # rownames_to_column("type_col") %>%
-  #tidyr::gather(type_col, cols) %>%
-  dplyr::full_join(hclus, by = "type_col") %>% 
-  mutate(type_col = factor(type_col, levels = rev(as.character(names_order)))) %>% 
-  ggplot(aes(x = start, y = mcall, colour = cluster_group)) +
-  geom_line() +
-  facet_wrap(~type_col, ncol = 1, strip.position="left") + 
-  guides(color=FALSE) +
-  theme_bw() + 
-  theme(strip.background = element_blank(), strip.text = element_blank())
-
-gp1<-ggplotGrob(p1)
-gp2<-ggplotGrob(p2) 
-
-grid.arrange(gp2, gp1, ncol=2, widths=c(4,2))
+#p2 <- mat2 %>%
+# # rownames_to_column("type_col") %>%
+#  #tidyr::gather(type_col, cols) %>%
+#  dplyr::full_join(hclus, by = "type_col") %>% 
+#  mutate(type_col = factor(type_col, levels = rev(as.character(names_order)))) %>% 
+#  ggplot(aes(x = start, y = mcall, colour = cluster_group)) +
+#  geom_line() +
+#  facet_wrap(~type_col, ncol = 1, strip.position="left") + 
+#  guides(color=FALSE) +
+#  theme_bw() + 
+#  theme(strip.background = element_blank(), strip.text = element_blank())
+#
+#gp1<-ggplotGrob(p1)
+#gp2<-ggplotGrob(p2) 
+#
+#grid.arrange(gp2, gp1, ncol=2, widths=c(4,2))
 
 ```
 
@@ -371,7 +371,7 @@ CGI_genes_filtered <- CGI_genes %>%
 
 
 all_phased=data.frame()
-for (i in 1:length(CGI_genes_filtered$start)){
+for (i in 309:length(CGI_genes_filtered$start)){
  
   cgcalls_sub <- cgcalls %>%
   filter(start > (CGI_genes_filtered$start[i])) %>%
@@ -379,6 +379,10 @@ for (i in 1:length(CGI_genes_filtered$start)){
   select(c(qname, start,mcall)) 
   
   # sometimes there are duplicate read IDs -- I don't really know how to handle this - remove read if read ID appears more than once 
+  if (length(cgcalls_sub$qname) == 0) { 
+  print("No reads map here!")
+    next
+    }
   
   check <- cgcalls_sub %>%
     group_by(qname, start) %>%
@@ -427,9 +431,38 @@ for (i in 1:length(CGI_genes_filtered$start)){
 
 ```
 
-```{r}
+```{r save_dat, include=F}
 write.table(all_phased, file = paste0(dat, "/CGIs/phased_CGIs.tsv"),quote = F, sep = "\t",
             eol = "\n", na = "NA", dec = ".", row.names = F,
             col.names = TRUE)
+
+all_phased_genes <- all_phased %>%
+  mutate(chr = "chrX")
+
+all_phased_genes <- ovls(GRanges(all_phased_genes),genes) %>%
+  select(c(seqnames, start, end, width, Name, gene, reg))
+
+write.table(all_phased, file = paste0(dat, "/CGIs/phased_CGIs_genes.tsv"),quote = F, sep = "\t",
+            eol = "\n", na = "NA", dec = ".", row.names = F,
+            col.names = TRUE)
+
+hets <- all_phased_genes %>%
+  filter(reg == "hom")
+```
+
+```{r plotregs, echo=F}
+
+p1 <- all_phased_genes %>%
+  filter(reg == "het") %>%
+  ggplot(aes(start, y=1))+geom_point()
+
+
+L1 <- reps %>%
+  filter(sub_type == "L1") %>%
+  filter(chr == "chrX")%>%
+  ggplot(aes(start))+geom_histogram(binwidth = 200000)
+
+plot_grid(p1, L1, ncol =1, align ="v")
+
 ```
 

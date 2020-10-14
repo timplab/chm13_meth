@@ -110,11 +110,11 @@ smoothplot<-function(cen){
 pal <- wes_palette("Zissou1", 200, type = "continuous")
 
 cen <- cen %>%
-  mutate(smooth = rollmean(CpG, 200, fill = NA)) %>%
-  mutate(meth = rollmean(meth, 200, fill = NA))
+  mutate(cpgsmooth = rollmean(CpG, 200, fill = NA)) %>%
+  mutate(methsmooth = rollmean(meth, 200, fill = NA))
 
 pal <- wes_palette("Zissou1", 200, type = "continuous")
-p <- ggplot(cen, aes(x=smooth, y = meth))+
+p <- ggplot(cen, aes(x=cpgsmooth, y = methsmooth))+
   stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,20)+theme(legend.position = c(0.8, 0.2))+theme_classic()+ylim(0,1)
 
 thm = list(theme_void(),
@@ -127,7 +127,7 @@ p2 = ggplot(cen, aes(meth)) +
   thm +
   coord_cartesian(0,1)+
   coord_flip()
-p3 = ggplot(cen, aes(smooth)) +
+p3 = ggplot(cen, aes(CpG)) +
   geom_histogram(bins=100) + 
   thm +xlim(0,20)
 plot_final <- plot_grid(
@@ -199,9 +199,9 @@ rep_meth <- ovls(chm13, reps.gr)
 #  height = 9,
 #)
 
-#types <- levels(as.factor(rep_meth$rep_type))
-types = c("LINE", "Low_complexity", "LTR", "tRNA", "rRNA", "RC", "Satellite", "Simple_repeat", "DNA", "Retroposon")
-type="Retroposon"
+types <- levels(as.factor(rep_meth$rep_type))
+types <- c("DNA", "LINE", "tRNA", "snRNA", "Simple_repeat", "RC", "SINE")
+
 for (i in 1:length(types)){
   sub <- types[i]
   
@@ -414,6 +414,28 @@ ggsave(
 ```
 
 ```{r cengenes, echo=F}
+
+
+
+genes <- gffRangedData[gffRangedData$type == "gene" ]
+
+TSS <- start(resize(genes, 1))
+upstream <- TSS - 2000
+
+mcols(genes) <- cbind.data.frame(
+    mcols(genes),
+    TSS, upstream)
+
+upstream_tss <- as.data.frame(genes) %>%
+  mutate(end = TSS) %>%
+  mutate(start = upstream)
+  
+genes.gr <-as(upstream_tss, "GRanges")
+
+
+genes_meth <- ovls(chm13, genes.gr)
+
+
 CT <- censat_meth %>%
   filter(name == "CT") 
 
@@ -422,6 +444,26 @@ ct.gr <- GRanges(CT)
 CT_meth <- ovls(ct.gr, exon)
 
 p <- smoothplot(CT_meth)
+p
+
+types = levels(CT_meth$seqnames) 
+
+for (i in 1:length(types)){
+  sub <- types[i]
+  
+HOR <- CT_meth %>%
+  filter(seqnames == sub)
+
+p <- smoothplot(HOR)
+
+ggsave(
+  paste0(figs, "/",sub,"_CT_genes_S20_smoothmap.pdf"),
+  plot = p,
+  scale = 1,
+  width = 12,
+  height = 9,
+)
+}
 ```
 
 

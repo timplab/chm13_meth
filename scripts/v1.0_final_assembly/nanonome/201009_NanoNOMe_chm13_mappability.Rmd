@@ -1,0 +1,62 @@
+---
+title: "201009_NanoNOMe_chm13_mappability"
+author: "G$"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(mclust)
+library(ggridges)
+library(Sushi)
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/nanonome/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+cov <- read_tsv(paste0(dat, "/nanonome/bam/censat_v.9_regions.bedgraph"), col_names = c("chr", "start", "end", "cov"))
+```
+
+```{r plot, echo=T}
+
+#genome coverage as sliding window
+cov.average <-cov %>%
+  group_by(chr) %>%
+  summarise(
+  window.start = rollapply(start, width=1000, by=1000, FUN=min, align="left", partial=TRUE),
+  window.end = rollapply(end, width=1000, by=1000, FUN=max, align="left", partial=TRUE),
+  coverage = rollapply(cov, width=1000, by=1000, FUN=mean, align="left", partial=TRUE)
+) %>%
+  ungroup()
+
+
+p <- ggplot(cov.average, aes( x = window.start, y = coverage))+geom_smooth(method = "loess", span = 0.01,se = F)+facet_wrap(~chr, scales = "free")
+p
+
+ggsave(
+  paste0(figs, "/","GM12878_cen_coverage.pdf"),
+  plot = p,
+  scale = 1,
+  width = 10,
+  height = 10,
+)
+```
+

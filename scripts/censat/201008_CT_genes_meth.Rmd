@@ -1,0 +1,476 @@
+---
+title: "201008_SD_methylation"
+author: "Ariel"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,  message=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(wesanderson)
+library(ggExtra)
+library(biovizBase)
+library(Repitools)
+library(Biostrings)
+library(ggplot2)
+library(BSgenome)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggridges)
+library(GenomicRanges)
+library(RColorBrewer)
+library(BSgenome.t2t.v1.1)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+library(gridExtra) 
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/final_assembly"
+
+gffRangedData<-import.gff(paste0(dat, "/liftoff/hg38_genes_t2t_liftoff.gtf")) 
+chm13 <- readRDS(paste0(dat, "/ref/chm13_200bpCpG_cov_200_CpG_num.rds"))
+
+reps <- read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727_repeatmasker.out.bed") ,col_names= F) %>%
+  dplyr::select(X1, X2, X3, X4, X7, X8) %>%
+  dplyr::rename("chr" = X1, "start" = X2, "end" = X3, "rep_type" = X7, "sub_type" = X8, "ev_name" = X4) %>%
+  mutate(len = end - start) %>%
+  mutate(ID = row_number())
+SD <- read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727.SDs.bed")) %>%
+  dplyr::rename("chr" = 1, "start" = 2, "end" = 3) %>%
+  mutate(start = start +1)
+censat = read_tsv(paste0(dat, "/annotations/t2t-chm13.20200727.cenSat_annotation.bed"), col_names = F) %>%
+  mutate(name = ifelse(grepl("HSat1", X4), "HSAT1", X4)) %>%
+  mutate(name = ifelse(grepl("HSat2", X4), "HSAT2", name)) %>%
+  mutate(name = ifelse(grepl("HSat3", X4), "HSAT3", name)) %>%
+  mutate(name = ifelse(grepl("HSat4", X4), "HSAT4", name)) %>%
+  mutate(name = ifelse(grepl("HSat5", X4), "HSAT5", name)) %>%
+  mutate(name = ifelse(grepl("HSat6", X4), "HSAT6", name)) %>%
+  mutate(name = ifelse(grepl("ct", X4), "CT", name)) %>%
+  mutate(name = ifelse(grepl("bsat", X4), "BSAT", name)) %>%
+  mutate(name = ifelse(grepl("hor", X4), "HOR", name)) %>%
+  mutate(name = ifelse(grepl("mon", X4), "MON", name)) %>%
+  mutate(name = ifelse(grepl("Alu", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("SATR", X4), "SATR", name)) %>%
+  mutate(name = ifelse(grepl("ACRO", X4), "ACRO", name)) %>%
+  mutate(name = ifelse(grepl("GSATII", X4), "GSATII", name)) %>%
+  mutate(name = ifelse(grepl("TAR", X4), "TAR", name)) %>%
+  mutate(name = ifelse(grepl("TE", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("MER", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("MST", X4), "MST", name)) %>%
+  mutate(name = ifelse(grepl("CER", X4), "CER", name)) %>%
+  mutate(name = ifelse(grepl("L1", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("SST", X4), "SST", name)) %>%
+  mutate(name = ifelse(grepl("LSAU", X4), "LSAU", name)) %>%
+  mutate(name = ifelse(grepl("GSAT", X4), "GSAT", name)) %>%
+  mutate(name = ifelse(grepl("MSAT", X4), "MSAT", name)) %>%
+  mutate(name = ifelse(grepl("novel", X4), "novel", name)) %>%
+  mutate(name = ifelse(grepl("HERV", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("LT", X4), "TE", name)) %>%
+  dplyr::select(c(X1, X2, X3, name)) %>%
+  dplyr::rename("chrom" =1, "start" = 2 ,"end" =3) %>%
+  ungroup()
+table(censat$name)
+
+age <-  read_tsv(paste0(dat, "/annotations/RM_L1_evage.bed"), col_names = c("ev_name", "age"))
+```
+
+
+```{r functions, include=F}
+CalculateCpG <- function (obj, ..., step, as.prob = TRUE) 
+{
+    require(BSgenome)
+    seqs <- getSeq(obj, ..., as.character = FALSE)
+    if (missing(step)) {
+        res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,7]
+    }
+    else {
+        res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, 2, step = step, as.prob = as.prob)[,7])
+        if (length(res) == 1) 
+            res <- unlist(res)
+    }
+    res
+}
+
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend) }
+
+smoothplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(cpgsmooth = rollmean(CpG, 200, fill = NA)) %>%
+  mutate(methsmooth = rollmean(meth, 200, fill = NA))
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(cen, aes(x=cpgsmooth, y = methsmooth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,20)+theme(legend.position = c(0.8, 0.2))+theme_classic()+ylim(0,1)
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(CpG)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+prettyplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA))
+
+p <- ggplot(cen, aes(x=smooth, y = meth))+
+  geom_bin2d(aes(fill=..count..)) +
+  scale_fill_gradientn(colours = pal)+
+  theme_classic()+xlim(0,20)+theme(legend.position = c(0.8, 0.2))
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+ovls<-function(gr1, gr2){
+  keepi <- findOverlaps(gr1, gr2)
+freq.matched <- gr1[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(gr2[subjectHits(keepi)]))
+
+df <- as.data.frame(freq.matched)
+return(df)
+}
+
+```
+
+# Promoter methylation in genes in the centromeric transition regions (0727 assembly)
+- Comparing methylation in normalized gene length +/-10kb of the flanking regions for genes within the centromeric transition (CT) regions and genes not within the CT regions
+- We note a slight hypomethylation in the promoters of the CT genes 
+- Next steps: 
+  - Call CGIs and filter genes based on presence or absence of CGI at its promoter 
+  - incorporate RNA-seq data so subset into expresion quartiles 
+```{r metaplots,include=F}
+
+genes <- gffRangedData[gffRangedData$type == "gene" ]
+
+flankn <- 10e3
+bodylen <- 2
+regions <- as.data.frame(genes) %>%
+  mutate( 
+    start = start - flankn,
+    end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(chm13, regions)
+genes.ovl <- as.data.frame(genes)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end, gene_strand = strand) 
+
+chm13.ovl <- as.data.frame(chm13[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  mutate(dist = ifelse(gene_strand == "-",gene_end - start, start - gene_start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+CT.gr <- GRanges(censat %>%
+  filter(name == "CT"))
+
+
+CT.genes <- as.data.frame(ovls(regions,CT.gr)) %>%
+  select(Name) %>%
+  distinct()
+
+chm13.ovl.labs <- chm13.ovl %>%
+  mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+  group_by(dist, reg) %>%
+  summarise(med_meth = median(meth)) %>%
+  distinct()
+
+# methylation in CT genes vs all other genes 
+p <- ggplot(chm13.ovl.labs,aes( x = dist, y = med_meth, color = reg)) +
+  geom_smooth(method = "loess", span = 0.15,se = F) + lims( y = c(0,1)) +
+#  geom_smooth(se=F)+lims( y = c(0,1)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"TSS","TTS",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()#+facet_wrap(~seqnames, scales = "free")
+
+#ggsave(
+#  paste0(figs, "/","gene_methylation_metaplot.pdf"),
+#  plot = p,
+#  scale = 1,
+#  width = 10,
+#  height = 10,
+#)
+#
+
+```
+
+```{r, echo=F, fig.height=5, fig.width=8}
+suppressMessages(print(p))
+```
+
+\newpage
+
+# Methylation in SD genes vs all genes
+- Comparing methylation in normalized gene length +/-10kb of the flanking regions for genes within segmental duplications (SDs)  and genes not within SDs
+- We do not see changes in promoter methylation in SD vs non-SD genes  
+
+```{r,include=F}
+
+#methylation in SD genes vs all other genes 
+
+SD.genes <- as.data.frame(ovls(regions,GRanges(SD))) %>%
+  select(Name) %>%
+  distinct()
+
+chm13.ovl.labs <- chm13.ovl %>%
+  mutate(reg = ifelse(Name %in% SD.genes$Name, "SD", "non-SD")) %>%
+  group_by(dist, reg) %>%
+  summarise(med_meth = median(meth)) %>%
+  distinct()
+
+p <- ggplot(chm13.ovl.labs,aes( x = dist, y = med_meth, color = reg)) +
+  geom_smooth(method = "loess", span = 0.15,se = F) + lims( y = c(0,1)) +
+#  geom_smooth(se=F)+lims( y = c(0,1)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"TSS","TTS",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()#+facet_wrap(~seqnames, scales = "free")
+```
+
+```{r, echo=F, fig.height=5, fig.width=8}
+suppressMessages(print(p))
+```
+
+\newpage 
+
+# SD genes in CT regions
+- Comparing methylation in SD genes outside of the CT regions vs SD genes inside the CT regions
+- We note the same hypomethylation in the promoter of the CT genes 
+  - Is it possible this promoter hypomethylation is being driven by the CT genes in this region
+- Next steps:
+  - Again, normalize for presence of CG island in the promoter and include RNA-seq quartiles 
+  - Can we do a pairwise comparison of interesting SD genes where one copy is within the CT region and another copy is outside? 
+  
+```{r SD_CT, include=F}
+
+# SD genes in CT regions vs SD genes not in CT regions
+
+SD.ovls <- chm13.ovl %>%
+  filter(Name %in% SD.genes$Name)  %>%
+  mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+  group_by(dist, reg) %>%
+  summarise(med_meth = median(meth)) %>%
+  distinct()
+
+p <- ggplot(SD.ovls,aes( x = dist, y = med_meth, color = reg)) +
+  geom_smooth(method = "loess", span = 0.15,se = F) + lims( y = c(0,1)) +
+#  geom_smooth(se=F)+lims( y = c(0,1)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"TSS","TTS",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()#+facet_wrap(~seqnames, scales = "free")
+#ggsave(
+#  paste0(figs, "/","SD_CT_methylation_metaplot.pdf"),
+#  plot = p,
+#  scale = 1,
+#  width = 10,
+#  height = 10,
+#)
+```
+```{r, echo=F, fig.height=5, fig.width=8}
+suppressMessages(print(p))
+```
+
+\newpage
+
+# Methylation within and 50kb flanking SDs 
+Criteria for SDs included in this analysis:
+- SDs > 50kb in length 
+- Do not have another SD within 50kb of flanking regions 
+- Comparing methylation in normalized SD length and +/-50kb of the flanking regions for genes 
+- For heatmaps each row is an individual SD 
+- Aggregated methylation plot is the smoothed average of all SDs
+```{r SD_all, include=F}
+
+# SDs all 
+
+flank <- read_tsv(paste0(dat, "/sd/blocks.with.flanks.nowindows.bed"), col_names = c("seqnames", "start", "end")) %>%
+  mutate(ID = row_number())
+  
+
+
+flankn <- 50e3
+bodylen <- 2
+SD_regions <- flank %>%
+  mutate(
+    start = start - flankn,
+    end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(chm13, SD_regions)
+genes.ovl <- as.data.frame(flank)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end) 
+
+chm13.ovl <- as.data.frame(chm13[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  mutate(dist = start - gene_start) %>%
+  mutate(dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,2)
+    )
+
+
+chm13.ovl.labs <- chm13.ovl %>%
+  group_by(dist) %>%
+  summarise(med_meth = median(meth)) %>%
+  distinct()
+
+
+p <- ggplot(chm13.ovl.labs,aes( x = dist, y = med_meth)) +
+  geom_smooth(method = "loess", span = 0.1,se = F) + lims( y = c(0,1)) +
+#  geom_smooth(se=F)+lims( y = c(0,1)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"SD Start","SD End",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()#+facet_wrap(~seqnames, scales = "free")
+p
+#ggsave(
+#  paste0(figs, "/","SD_methylation_metaplot.pdf"),
+#  plot = p,
+#  scale = 1,
+#  width = 10,
+#  height = 10,
+#)
+
+# cluster and make distance matrix
+clust_meth <- chm13.ovl %>% 
+  select(c(ID,meth,dist)) %>%
+  group_by(ID, dist) %>%
+  summarise(meth = mean(meth)) %>%
+  spread(dist,meth) %>%
+  column_to_rownames("ID") %>%
+  as.matrix() 
+
+  clust_CpG <- chm13.ovl %>% 
+  select(c(ID,CpG,dist)) %>%
+  group_by(ID, dist) %>%
+  summarise(CG = mean(CpG)) %>%
+  spread(dist,CG) %>%
+  column_to_rownames("ID") %>%
+  as.matrix() 
+
+library(gplots)
+library(pheatmap)
+coul <- colorRampPalette(brewer.pal(8, "PiYG"))(25)
+
+quantile_breaks <- function(xs, n = 10) {
+  breaks <- quantile(xs, probs = seq(0, 1, length.out = n), na.rm = T)
+  breaks[!duplicated(breaks)]
+}
+annot <- chm13.ovl %>% 
+  select(c(ID,meth,dist)) %>%
+  group_by(ID, dist) %>%
+  summarise(meth = mean(meth))%>%
+  mutate(reg = case_when( dist < 0 ~ "flank", 
+                    dist > bodylen ~ "flank", 
+                    TRUE ~ "SD")) %>%
+  ungroup() %>%
+  select(c(dist, reg)) %>%
+  distinct() %>%
+  column_to_rownames("dist")
+
+#ggsave(
+#  paste0(figs, "/","SD_methylation_heatmap.pdf"),
+#  plot = p,
+#  scale = 1,
+#  width = 10,
+#  height = 10,
+#)
+
+```
+
+```{r, echo=F, fig.height=5, fig.width=8}
+suppressMessages(print(p))
+mat_breaksCG <- quantile_breaks(clust_CpG, n = 11)
+mat_breaksmeth <- quantile_breaks(clust_meth, n = 11)
+library(viridis)
+pheatmap(clust_CpG, cluster_cols = F, annotation_col = annot, show_rownames = F, show_colnames = F, breaks= mat_breaksCG, color = inferno(length(mat_breaksCG) - 1), main = "SD CpG Density in 200bp window")
+pheatmap(clust_meth, cluster_cols = F, annotation_col = annot, show_rownames = F, show_colnames = F, main = "SD Methylation")
+
+```
+
+
+# Next steps:
+  - There is clearly a methylated and unmethylated cluster of SDs, are there specific types of SDs enriched in either cluster
+  - Can we further stratify this by other metadata (ie. copy number, inter/intra, percent identity)
+
