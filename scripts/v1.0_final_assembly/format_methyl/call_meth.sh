@@ -16,7 +16,7 @@ if [ "$1" == "bam" ]; then
 #	base=output
 #	samtools view -h -b -F 272 ${outdir}/ont.primary.bam > ${outdir}/ont.primary_filtered.bam
 #	samtools index ${outdir}/ont.primary_filtered.bam
-	/usr/bin/python /home/gmoney/repos/nanopore-methylation-utilities/convert_bam_for_methylation.py -t 65 --verbose -b ${outdir}/ont.primary.bam \
+	~/miniconda3/bin/python /home/gmoney/repos/nanopore-methylation-utilities/convert_bam_for_methylation.py -t 65 --verbose -b ${outdir}/ont.primary.bam \
 		-c ${outdir}/CpGmethylation.bed.gz -f $ref |\
 		samtools sort -o ${outdir}/ont.primary_meth.bam
 	samtools index ${outdir}/ont.primary_meth.bam
