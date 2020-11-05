@@ -1,0 +1,250 @@
+---
+title: "201008_SD_methylation"
+author: "Ariel"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,  message=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(wesanderson)
+library(ggExtra)
+library(biovizBase)
+library(Repitools)
+library(Biostrings)
+library(ggplot2)
+library(BSgenome)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggridges)
+library(GenomicRanges)
+library(RColorBrewer)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+library(gridExtra) 
+library(pheatmap)
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/sd/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+flank <- read_tsv(paste0(dat, "/sd/blocks.with.flanks.nowindows.bed"), col_names = c("seqnames", "start", "end")) %>%
+  mutate(ID = row_number())
+  
+chm13_meth <- readRDS(paste0(dat, "/methylation_calls/chm13_methylation_50kb.rds"))
+chm13_CpG <- readRDS(paste0(dat, "/reference/chm13_sliding_200_CpG.rds"))
+```
+
+
+```{r functions, include=F}
+CalculateCpG <- function (obj, ..., step, as.prob = TRUE) 
+{
+    require(BSgenome)
+    seqs <- getSeq(obj, ..., as.character = FALSE)
+    if (missing(step)) {
+        res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,7]
+    }
+    else {
+        res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, 2, step = step, as.prob = as.prob)[,7])
+        if (length(res) == 1) 
+            res <- unlist(res)
+    }
+    res
+}
+
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend) }
+
+smoothplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(cpgsmooth = rollmean(CpG, 200, fill = NA)) %>%
+  mutate(methsmooth = rollmean(meth, 200, fill = NA))
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(cen, aes(x=cpgsmooth, y = methsmooth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,20)+theme(legend.position = c(0.8, 0.2))+theme_classic()+ylim(0,1)
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(CpG)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+prettyplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA))
+
+p <- ggplot(cen, aes(x=smooth, y = meth))+
+  geom_bin2d(aes(fill=..count..)) +
+  scale_fill_gradientn(colours = pal)+
+  theme_classic()+xlim(0,20)+theme(legend.position = c(0.8, 0.2))
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+ovls<-function(gr1, gr2){
+  keepi <- findOverlaps(gr1, gr2)
+freq.matched <- gr1[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(gr2[subjectHits(keepi)]))
+
+df <- as.data.frame(freq.matched)
+return(df)
+}
+
+```
+
+# Methylation within and 50kb flanking SDs 
+Criteria for SDs included in this analysis:
+- SDs > 50kb in length 
+- Do not have another SD within 50kb of flanking regions 
+- Comparing methylation in normalized SD length and +/-50kb of the flanking regions for genes 
+- For heatmaps each row is an individual SD 
+- Aggregated methylation plot is the smoothed average of all SDs
+```{r SD_all, include=F}
+
+# SDs all 
+
+flankn <- 20e3
+bodylen <- 3
+SD_regions <- flank %>%
+  mutate(
+    start = start - flankn,
+    end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(chm13_meth, SD_regions)
+genes.ovl <- as.data.frame(flank)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end) 
+
+chm13.ovl <- as.data.frame(chm13_meth[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  mutate(dist = start - gene_start) %>%
+  mutate(dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,2)
+    )
+
+
+chm13.ovl.labs <- chm13.ovl %>%
+  group_by(dist) %>%
+  summarise(med_meth = median(meth)) %>%
+  distinct()
+
+
+# cluster and make distance matrix
+clust_meth <- chm13.ovl %>% 
+  select(c(ID,meth,dist)) %>%
+  group_by(ID, dist) %>%
+  summarise(meth = mean(meth)) %>%
+  spread(dist,meth) %>%
+  column_to_rownames("ID") %>%
+  as.matrix() 
+
+
+annot <- chm13.ovl %>% 
+  select(c(ID,meth,dist)) %>%
+  group_by(ID, dist) %>%
+  summarise(meth = mean(meth))%>%
+  mutate(reg = case_when( dist < 0 ~ "flank", 
+                    dist > bodylen ~ "flank", 
+                    TRUE ~ "SD")) %>%
+  ungroup() %>%
+  select(c(dist, reg)) %>%
+  distinct() %>%
+  column_to_rownames("dist")
+
+#ggsave(
+#  paste0(figs, "/","SD_methylation_heatmap.pdf"),
+#  plot = p,
+#  scale = 1,
+#  width = 10,
+#  height = 10,
+#)
+
+```
+
+```{r, echo=F, fig.height=5, fig.width=8}
+
+
+library(viridis)
+
+res <- pheatmap(clust_meth, cluster_cols = F, annotation_col = annot, show_rownames = F, show_colnames = F, main = "SD Methylation")
+res
+
+SDmeth.clust <- as.data.frame(clust_meth) %>%
+  mutate(avgmeth = rowMeans(., na.rm = T)) %>%
+  mutate(cluster_num = cutree(res$tree_row, k = 2)) %>%
+  rownames_to_column("ID") %>%
+  select(c(ID, cluster_num, avgmeth)) %>%
+  mutate(clust_meth = case_when(cluster_num == 1 ~ "unmeth", 
+                                cluster_num == 2 ~ "meth"))
+  
+final_clust <- merge(flank,SDmeth.clust, by = "ID") %>%
+  select(-c(ID)) %>%
+  rename(seqnames = "chr")
+
+write.table(final_clust, file = paste0(dat, "/sd/t2t_chm13v1.0_SD_clustered_methylation.bed"),quote = F, sep = "\t", row.names = F, col.names = T)
+```
+

@@ -1,0 +1,158 @@
+---
+title: "Read plots"
+author: "G$"
+date: "9/3/2020"
+output: pdf_document
+---
+
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggpmisc)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r mbed}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/censat/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+cenpb <-  read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_regions.cenpB_pJalpha.bed"), col_names = F) %>%
+  rename(X1 = "chr",  X2 = "start", X3 = "end", X4 = "prot") %>%
+  filter(prot == "CENPB") %>%
+  GRanges()
+```
+
+# CENP-B sites vary in methylation between sites and between individual reads at single site 
+```{r plot, echo=F}
+chrom="chr1"
+rstart=119295987
+rend=147836241
+
+reads <- tabix_mbed(paste0(dat, "/censat/", chr, "_cen.mbed"),extcol = "motif",by = "read") 
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+  filter(rlen >= 50000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+```
+
+
+
+```{r freq, include=F}
+chm13_meth = readRDS(paste0(dat, "/methylation_calls/chm13_methylation_50kb.rds"))
+
+
+keepi <- findOverlaps(chm13_meth,cenpb)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(cenpb[subjectHits(keepi)]))
+
+cenpb_meth <- as.data.frame(freq.matched)
+```
+
+# Methylation state is higher in motifs that are more common
+
+```{r violin1, echo=F}
+bis <- cenpb_meth %>% 
+  filter(seqnames == chrom) %>%
+  filter(start > rstart) %>%
+  filter(end < rend) %>%
+  group_by(seqnames, start) %>%
+  summarise(meth_freq = mean(meth), cov = n()) %>%
+  mutate(smooth = rollmean(meth_freq, 200, fill = NA)) %>%
+  mutate(cov_smooth = rollmean(cov, 200, fill = NA))
+
+meth <- ggplot(bis, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim(120,130)
+meth
+```
+
+# Looking just across chromosome 1 methylation state varies between annotated HOR arrays
+```{r violin2, echo=F}
+
+keepi <- findOverlaps(chm13_meth,cenpb)
+freq.matched <- chm13_meth[-queryHits(keepi)]
+
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched))
+    #mcols(cenpb[subjectHits(keepi)]))
+
+non_cenpb <- as.data.frame(freq.matched)
+
+bis <- non_cenpb %>% 
+  filter(seqnames == chrom) %>%
+  filter(start > rstart) %>%
+  filter(end < rend) %>%
+  group_by(seqnames, start) %>%
+  summarise(meth_freq = mean(meth), cov = n()) %>%
+  mutate(smooth = rollmean(meth_freq, 200, fill = NA)) %>%
+  mutate(cov_smooth = rollmean(cov, 200, fill = NA))
+
+meth <- ggplot(bis, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim(120,130)
+meth
+
+```
+
+
+```{r}
+#121808411       121809089
+
+
+cg_reg <- cgcalls  %>%
+  filter(start > 121870000) %>%
+  filter(end < 121890000)
+  
+runs <- getRuns(cg_reg, maxGap = 80)
+ 
+ 
+ cpg_runs.ordered <- order_reads(runs)
+  
+  cpg_runs_reg <- cpg_runs.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+  
+ pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+unsmooth <- ggplot(cpg_runs_reg,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
+    geom_rect(aes(fill = m))  +
+  #  geom_vline(xintercept = 121808411, linetype = "dashed") +geom_vline(xintercept = 121809089, linetype = "dashed") +
+    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+theme(legend.position="bottom")
+  
+print(unsmooth)
+
+
+
+bis <- cg_reg %>% 
+  filter(chrom == chrom) %>%
+  filter(start > 121870000) %>%
+  filter(end < 121890000) %>%
+  group_by(chrom, start) %>%
+  summarise(meth_freq = mean(mcall), cov = n()) %>%
+  mutate(smooth = rollmean(meth_freq, 8, fill = NA)) %>%
+  mutate(cov_smooth = rollmean(cov, 8, fill = NA))
+
+meth <- ggplot(bis, aes(x = (start/1e6), y= smooth))+geom_line(size =1) +ylim(0,1)+theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(),axis.title.y=element_blank(), axis.title.x=element_blank(), panel.spacing = unit(2, "lines"))
+
+
+p_row <- plot_grid(meth,unsmooth, ncol = 1, align="v", rel_heights = c(1/4, 1/2))
+p_row
+```
+
+

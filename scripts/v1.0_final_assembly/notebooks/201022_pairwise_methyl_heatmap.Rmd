@@ -1,0 +1,378 @@
+---
+title: "methylation_identity_plot"
+author: "G$"
+date: "10/22/2020"
+output: html_document
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(BSgenome.t2t.v1.0.release)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(stringr)
+
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/TE/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+  
+#chm13_meth <- readRDS(paste0(dat, "/methylation_calls/chm13_methylation_50kb.rds"))
+#chm13_CpG <- readRDS(paste0(dat, "/reference/chm13_sliding_200_CpG.rds"))
+
+#reps <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0.fasta_rm.bed"), col_names = c("chr", "start", "end", "Name", "len", "strand", "type")) %>%
+#  mutate(ID = row_number())
+
+chrom="chr8"
+rstart=45000000
+rend=46000000
+minlen=50000
+
+reads <- tabix_mbed(paste0(dat, "/censat/", chrom, "_cen.mbed"),extcol = "motif",by = "read") 
+#chrX:48,626,035-49,040,073
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+  filter(rlen >= minlen) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+
+chm13_meth <- cgcalls %>% 
+  filter(start > rstart) %>%
+  filter(end < rend) %>%
+  group_by(chrom, start) %>%
+  summarise(meth = mean(mcall)) %>%
+  mutate(end = start) %>%
+  relocate(end, .before = meth) %>%
+  GRanges()
+
+
+```
+
+# The plan
+- make 10kb windows, compare every window to every other window and get a distance score - plot as heatmap 
+
+
+```{r hsat2_cooccurance, echo=F} 
+#  filter(start > 129504453) %>%
+ # filter(end < 141841828)
+
+win.gr <- data.frame(seqnames = "chr8", start = 45000000, end= 46000000) %>%
+  GRanges()
+
+sliding_blocks <- tile(win.gr, width = 1000)
+
+ran <- data.frame(sliding_blocks) %>%
+  mutate(bin = row_number()) %>%
+  mutate(pos_start = start) %>%
+  GRanges()
+
+
+keepi <- findOverlaps(chm13_meth,ran)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(ran[subjectHits(keepi)]))
+
+freq.matched
+
+meth <- as.data.frame(freq.matched) %>%
+  mutate(pos = start - pos_start) %>%
+ # mutate(meth = case_when(meth > .5 ~ "1", 
+ #                         meth < .5 ~"0")) %>%
+  mutate(meth = as.numeric(meth)) %>%
+  select(meth, bin, pos) %>%
+  group_by(bin) %>%
+  summarise(avgmeth = median(meth)) %>%
+  na.omit()
+
+
+
+N <- meth$avgmeth
+i <- seq(meth$avgmeth)
+j <- seq(meth$avgmeth)
+
+mat.end <- matrix(nrow = length(N), ncol = length(N))
+
+for (n in i){
+  for (y in j) {
+    meth1 = N[n]
+    meth2 = N[y]
+    mat.end[n,y]=abs(meth1-meth2)} 
+}
+
+
+library(reshape2)
+
+# Get lower triangle of the correlation matrix
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+  # Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+  
+upper_tri <- get_lower_tri(mat.end)
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# Heatmap
+library(ggplot2)
+pal <- wes_palette("Zissou1", 100, type = "continuous")
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradientn(colours =pal, 
+   name="Methylation difference",  limits = c(-1,1)) +
+ # theme_classic()+ 
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()+
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_blank()) 
+```
+
+
+```{r HOR_cooccurance, echo=F} 
+# 54706165        63933822 
+
+chrom="chrX"
+rstart=57593566
+rend=61247455
+window=10000
+
+
+mat <-  as.data.frame(chm13_meth) %>%
+  filter(seqnames == chrom) %>%
+  filter(start > rstart) %>%
+  filter(end < rend) %>%
+  mutate(meth  = as.numeric(meth)) %>%
+  select(c(start,meth))
+
+win.gr <- data.frame(seqnames = chrom, start = rstart, end= rend) %>%
+  GRanges()
+
+sliding_blocks <- tile(win.gr, width = window)
+
+ran <- data.frame(sliding_blocks) %>%
+  mutate(bin = row_number()) %>%
+  mutate(pos_start = start) %>%
+  GRanges()
+
+
+keepi <- findOverlaps(chm13_meth,ran)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(ran[subjectHits(keepi)]))
+
+freq.matched
+
+meth <- as.data.frame(freq.matched) %>%
+  mutate(pos = start - pos_start) %>%
+  mutate(meth = as.numeric(meth)) %>%
+  select(meth, bin, pos) %>%
+  group_by(bin) %>%
+  summarise(avgmeth = median(meth)) %>%
+  na.omit()
+
+
+N <- meth$avgmeth
+i <- seq(meth$avgmeth)
+j <- seq(meth$avgmeth)
+
+mat.end <- matrix(nrow = length(N), ncol = length(N))
+
+for (n in i){
+  for (y in j) {
+    meth1 = N[n]
+    meth2 = N[y]
+    mat.end[n,y]=(meth1-meth2)} 
+}
+
+
+library(reshape2)
+
+# Get lower triangle of the correlation matrix
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+  # Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+  
+
+
+coord <- as.data.frame(freq.matched) %>%
+  mutate(meth = as.numeric(meth)) %>%
+  select(meth, bin, start) %>%
+  group_by(bin) %>%
+  mutate(avgmeth = median(meth)) %>%
+  na.omit() %>%
+  select(bin, start) %>%
+  distinct() %>%
+  group_by(bin) %>%
+  summarise(start1 = min(start)) %>%
+  rename(bin = "Var1") 
+
+quant <- quantile(coord$Var1,c(0, .25, .5, .75, 1), FALSE, TRUE, 3)
+
+labs <- coord %>%
+  filter(Var1 %in% quant) %>%
+  mutate(start1 = round(start1/1e6, digits = 2))
+
+
+upper_tri <- get_lower_tri(mat.end) 
+
+melted_cormat <- melt(upper_tri, na.rm = TRUE) 
+
+
+
+# Heatmap
+library(ggplot2)
+library(grid)
+pal <- wes_palette("Zissou1", 100, type = "continuous")
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradientn(colours =pal, 
+   name="Methylation difference") +
+ # theme_classic()+ 
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+theme(axis.text.y = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()+
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_blank())+scale_x_continuous(breaks  = quant, labels = labs$start1)+scale_y_continuous(breaks  = quant, labels = labs$start1)
+
+
+```
+
+
+```{r random, echo=F} 
+# 54706165        63933822 
+
+mat <-  as.data.frame(chm13_meth) %>%
+  filter(seqnames == "chrX") %>%
+  filter(start > 114131156) %>%
+  filter(end < 114198689) %>%
+#  mutate(meth = case_when(meth > .5 ~ "1", 
+ #                         meth < .5 ~"0")) %>%
+  mutate(meth  = as.numeric(meth)) %>%
+  select(c(start,meth))
+
+win.gr <- data.frame(seqnames = "chr1", start = 114131156, end= 114198689) %>%
+  GRanges()
+
+sliding_blocks <- tile(win.gr, width = 500)
+
+ran <- data.frame(sliding_blocks) %>%
+  mutate(bin = row_number()) %>%
+  mutate(pos_start = start) %>%
+  GRanges()
+
+
+keepi <- findOverlaps(chm13_meth,ran)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(ran[subjectHits(keepi)]))
+
+freq.matched
+
+meth <- as.data.frame(freq.matched) %>%
+  mutate(meth = as.numeric(meth)) %>%
+  select(meth, bin, pos) %>%
+  group_by(bin) %>%
+  summarise(avgmeth = mean(meth)) %>%
+  na.omit()
+
+
+
+N <- meth$avgmeth
+i <- seq(meth$avgmeth)
+j <- seq(meth$avgmeth)
+
+mat.end <- matrix(nrow = length(N), ncol = length(N))
+
+#for (n in i){
+#  for (y in j) {
+#    meth1 = N[n]
+#    meth2 = N[y]
+#    if (meth1 == meth2){
+#      mat.end[n,y]=1} else{
+#        mat.end[n,y]=0
+#      }
+#  }
+#}
+
+for (n in i){
+  for (y in j) {
+    meth1 = N[n]
+    meth2 = N[y]
+    mat.end[n,y]=(meth1-meth2)} 
+}
+
+library(reshape2)
+
+# Get lower triangle of the correlation matrix
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+  # Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+  
+upper_tri <- get_lower_tri(mat.end)
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+
+
+# Heatmap
+library(ggplot2)
+pal <- wes_palette("Zissou1", 100, type = "continuous")
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradientn(colours =pal, 
+   name="Methylation difference", limits = c(-1,1)) +
+ # theme_classic()+ 
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()+
+  theme(panel.grid = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.background = element_blank()) 
+```
+
+
+

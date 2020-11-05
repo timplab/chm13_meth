@@ -1,0 +1,307 @@
+---
+title: "201015_TE_methylation"
+author: "Ariel"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,  message=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(wesanderson)
+library(ggExtra)
+library(biovizBase)
+library(Repitools)
+library(Biostrings)
+library(ggplot2)
+library(BSgenome)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggridges)
+library(GenomicRanges)
+library(RColorBrewer)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+library(gridExtra) 
+library(pheatmap)
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/TE/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+  
+chm13_meth <- readRDS(paste0(dat, "/methylation_calls/chm13_methylation_50kb.rds"))
+chm13_CpG <- readRDS(paste0(dat, "/reference/chm13_sliding_200_CpG.rds"))
+
+reps <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0.fasta_rm.bed"), col_names = c("chr", "start", "end", "Name", "len", "strand", "type")) %>%
+  mutate(ID = row_number())
+```
+
+
+```{r functions, include=F}
+CalculateCpG <- function (obj, ..., step, as.prob = TRUE) 
+{
+    require(BSgenome)
+    seqs <- getSeq(obj, ..., as.character = FALSE)
+    if (missing(step)) {
+        res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,7]
+    }
+    else {
+        res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, 2, step = step, as.prob = as.prob)[,7])
+        if (length(res) == 1) 
+            res <- unlist(res)
+    }
+    res
+}
+
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend) }
+
+smoothplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(cpgsmooth = rollmean(CpG, 200, fill = NA)) %>%
+  mutate(methsmooth = rollmean(meth, 200, fill = NA))
+
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+p <- ggplot(cen, aes(x=cpgsmooth, y = methsmooth))+
+  stat_density_2d(aes(fill = ..count..), geom = "raster", contour = F)+scale_fill_gradientn(colours = pal)+geom_density_2d(color = "black", linetype = "dotted")+xlim(0,20)+theme(legend.position = c(0.8, 0.2))+theme_classic()+ylim(0,1)
+
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(CpG)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+prettyplot<-function(cen){
+pal <- wes_palette("Zissou1", 200, type = "continuous")
+
+cen <- cen %>%
+  mutate(smooth = rollmean(CpG, 200, fill = NA))
+
+p <- ggplot(cen, aes(x=smooth, y = meth))+
+  geom_bin2d(aes(fill=..count..)) +
+  scale_fill_gradientn(colours = pal)+
+  theme_classic()+xlim(0,20)+theme(legend.position = c(0.8, 0.2))
+thm = list(theme_void(),
+           guides(fill=FALSE),
+           theme(plot.margin=unit(rep(2.5,4), "lines")))
+leg = g_legend(p)
+p1 = p + thm[-1]
+p2 = ggplot(cen, aes(meth)) +
+  geom_histogram() +
+  thm +
+  coord_cartesian(0,1)+
+  coord_flip()
+p3 = ggplot(cen, aes(smooth)) +
+  geom_histogram(bins=100) + 
+  thm +xlim(0,20)
+plot_final <- plot_grid(
+  plot_grid(plotlist=list(p3, ggplot(), p1, p2), ncol=2, 
+            rel_widths=c(4,1), rel_heights=c(1,4), align="hv", scale=1.1),leg, rel_widths=c(5,1))
+
+return(plot_final)
+}
+
+
+ovls<-function(gr1, gr2){
+  keepi <- findOverlaps(gr1, gr2)
+freq.matched <- gr1[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(gr2[subjectHits(keepi)]))
+
+df <- as.data.frame(freq.matched)
+return(df)
+}
+
+```
+
+```{r calc_dist, echo=F}
+
+# SDs all 
+
+flankn <- 0
+bodylen <- 4
+
+line = reps %>%
+  filter(Name == "SST1") 
+  #filter(type == "Alu")
+# filter(grepl("Alu", Name)) 
+ # filter(len > 5000) 
+# %>%
+#  filter(grepl("L1", Name)) %>%
+#  filter(len > 5500) 
+
+annot <- line %>%
+  select(c(ID, chr)) %>%
+ # distinct() %>%
+  column_to_rownames("ID")
+
+te_regions <- line %>%
+  mutate(
+    start = start - flankn,
+    end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(chm13_meth, te_regions)
+genes.ovl <- as.data.frame(line)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end) 
+
+chm13.ovl <- as.data.frame(chm13_meth[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  mutate(dist = start - gene_start) %>%
+  mutate(dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,2)
+    )
+
+TE.clust <- as.data.frame(chm13.ovl) %>%
+  group_by(ID) %>%
+  add_tally() %>%
+  filter(n >2) %>%
+  summarise(avgmeth = mean(meth)) %>%
+  mutate(clust_meth = case_when(avgmeth >= .5 ~ "meth", 
+                                avgmeth < .5 ~ "unmeth")) %>%
+  filter(clust_meth == "meth")
+
+  
+final_clust <- merge(line,TE.clust, by = "ID") %>%
+  select(-c(ID)) 
+
+write.table(final_clust, file = paste0(dat, "/TE/t2t_chm13v1.0_SST1_methylated.bed"),quote = F, sep = "\t", row.names = F, col.names = T)
+
+
+chm13.ovl.labs <- chm13.ovl %>%
+  group_by(dist) %>%
+  summarise(med_meth = median(meth)) %>%
+  distinct()
+
+
+# cluster and make distance matrix
+meth <- chm13.ovl %>% 
+  arrange(chr) %>%
+  select(c(ID,meth,dist)) %>%
+  group_by(ID, dist) %>%
+  summarise(meth = mean(meth)) %>%
+  spread(dist,meth) %>%
+  column_to_rownames("ID") %>%
+  as.matrix() 
+
+# order by average methylation
+
+
+smooth <- meth %>%
+  t() %>%
+  na.approx(rule = 2) %>%
+  as.data.frame() %>%
+ # dplyr::mutate(row = rownames(meth)) %>%
+#  column_to_rownames("row") %>%
+  t() %>%
+  na.omit() %>%
+  as.matrix()
+
+
+#annot <- chm13.ovl %>% 
+#  select(c(ID,meth,dist, seqnames)) %>%
+#  group_by(ID, dist, seqnames) %>%
+#  summarise(meth = mean(meth))%>%
+# # mutate(reg = case_when( dist < 0 ~ "flank", 
+#  #                  dist > bodylen ~ "flank", 
+#  #                  TRUE ~ "SD")) %>%
+#  ungroup() %>%
+#  select(c(dist, seqnames)) %>%
+#  distinct() %>%
+#  column_to_rownames("dist")
+
+
+
+
+res <- pheatmap(smooth, cluster_cols = F,show_rownames = F, show_colnames = F,cluster_rows = T, main = "ACRO1 Methylation", annotation_row = annot)
+res
+
+
+#ggsave(
+#  paste0(figs, "/","ACRO1_heatmap.pdf"),
+#  plot = res,
+#  scale = 1,
+#  width = 10,
+#  height = 10,
+#)
+```
+
+
+```{r, echo=F, fig.height=5, fig.width=8}
+
+
+library(viridis)
+
+# DTW 
+library("dtwclust")
+dtw_dist <- function(x){dist(x, method="DTW")}
+mat_dist <- dtw_dist(smooth)
+
+ mat_dist %>%
+   as.matrix() %>% 
+   gplots::heatmap.2 (
+    # dendrogram control
+    distfun = dtw_dist,
+    hclustfun = hclust,
+    dendrogram = "row",
+    Rowv = T,
+    labRow = T, Colv = F
+  )
+#SDmeth.clust <- as.data.frame(clust_meth) %>%
+#  mutate(avgmeth = rowMeans(., na.rm = T)) %>%
+#  mutate(cluster_num = cutree(res$tree_row, k = 2)) %>%
+#  rownames_to_column("ID") %>%
+#  select(c(ID, cluster_num, avgmeth)) %>%
+#  mutate(clust_meth = case_when(cluster_num == 1 ~ "unmeth", 
+#                                cluster_num == 2 ~ "meth"))
+#  
+#final_clust <- merge(flank,SDmeth.clust, by = "ID") %>%
+#  select(-c(ID)) %>%
+#  rename(seqnames = "chr")
+#
+#write.table(final_clust, file = paste0(dat, "/sd/t2t_chm13v1.0_SD_clustered_methylation.bed"),quote = F, sep = "\t", row.names = F, col.names = T)
+```
+
