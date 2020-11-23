@@ -1,0 +1,73 @@
+---
+title: "CENPA"
+author: "G$"
+date: "11/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)# load libraries
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+
+# set data output path
+
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/CENPA/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+```
+
+```{r}
+r1.gr <- read_tsv(paste0(dat, "/CENPA/ADGCCR06-EF_S5.6_L001_R1_001.t2t-chm13.v1.0.sortCOV10.bedgraph"), col_names = c("chr", "start", "end", "cov")) %>%
+  GRanges()
+
+r2.gr <- read_tsv(paste0(dat, "/CENPA/ADGCCR06-EF_S5.6_L001_R2_001.t2t-chm13.v1.0.sortCOV10.bedgraph"), col_names = c("chr", "start", "end", "cov")) %>%
+  GRanges()
+
+chm13_meth <- readRDS(paste0(dat, "/methylation_calls/chm13_methylation_NanopolishFreq_50kb.rds"))
+```
+
+```{r}
+
+keepi <- findOverlaps(chm13_meth,r1.gr)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(r1.gr[subjectHits(keepi)]))
+
+
+cenp <- as.data.frame(freq.matched)
+quantile(cenp$cov, c(.9,.95,.98,.995,.999,1))
+
+cenp <- cenp %>%
+  mutate(quant = case_when(cov > 28 & cov < 37 ~ "90", 
+                           cov > 37 & cov < 75 ~ "95", 
+                           cov > 75 & cov < 163 ~ "98",
+                           cov > 163 ~ "99.5",
+                           TRUE ~ "<90"))
+
+p1 <- ggplot(cenp, aes(x = quant, y = methylated_frequency, fill = quant))+geom_violin()+labs(x = "Quartile", y = "Methylation Frequency")+geom_boxplot(width=.1)+theme_classic()
+
+ggsave(
+  paste0(figs, "/CENPA_meth_violin.pdf"),
+  plot = p1,
+  scale = 1,
+  width = 8,
+  height = 5,
+  dpi = 50
+)
+
+```
+

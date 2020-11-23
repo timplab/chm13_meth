@@ -1,0 +1,164 @@
+---
+title: "TE quartiles"
+author: "Ariel"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,  message=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(wesanderson)
+library(ggExtra)
+library(biovizBase)
+library(Repitools)
+library(Biostrings)
+library(ggplot2)
+library(BSgenome)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggridges)
+library(GenomicRanges)
+library(RColorBrewer)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+library(gridExtra) 
+library(pheatmap)
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/TE/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+chm13_meth <- read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb_split.tsv")) %>%
+  GRanges()
+
+r1.gr <- read_tsv(paste0(dat, "/proseq/chm13-5A_chm13.draft_v1.0_Alu.overlap.bed"), col_names = c("chr", "start", "end", "thing", "cov")) %>%
+  GRanges()
+
+r2.gr <- read_tsv(paste0(dat, "/proseq/chm13-5B_chm13.draft_v1.0_Alu.overlap.bed"), col_names = c("chr", "start", "end", "thing", "cov")) %>%
+  GRanges()
+```
+
+```{r proseq, echo=F}
+
+
+
+rm <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0.fasta_rm.bed"), col_names = F) %>%
+  dplyr::filter(X8 == "Alu") %>%
+  mutate(name = ifelse(grepl("AluJ", X4), "AluJ", X4)) %>%
+  mutate(name = ifelse(grepl("AluY", X4), "AluY", name)) %>%
+  mutate(name = ifelse(grepl("AluS", X4), "AluS", name)) %>%
+  mutate(name = ifelse(grepl("FAM|FLAM_A|FLAM_C|FRAM|FRAM-C", X4), "Monomeric", name)) %>%
+  #filter(X5 > 250) %>%
+  #sample_n(50000) %>%
+  dplyr::rename("chr" = 1, "start"=2, "end"=3, "rep"=4, "width"=5, "direction"=6, "rep_type"=7, "rep_class"=8, "name"= name) %>%
+  mutate(ID = row_number())
+
+
+keepi <- findOverlaps(r1.gr,GRanges(rm))
+freq.matched <- r1.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(GRanges(rm)[subjectHits(keepi)]))
+
+r1_full <- as.data.frame(freq.matched) %>%
+  group_by(ID) %>%
+  summarise(seqnames= seqnames, start = min(start), end = max(end), cov = mean(cov), name = name) %>%
+  distinct() %>%
+  ungroup() %>%
+  mutate(quartile = ntile(cov, 4))
+
+
+keepi <- findOverlaps(chm13_meth,GRanges(r1_full))
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(GRanges(r1_full)[subjectHits(keepi)]))
+
+meth_pro_L1 <- as.data.frame(freq.matched)
+
+flankn <- 200
+bodylen <- 1
+
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(GRanges(meth_pro_L1), l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end) 
+
+chm13.ovl <- as.data.frame(GRanges(meth_pro_L1)[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(direction == "-",gene_end - start, start - gene_start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+chm13.ovl.labs <- chm13.ovl %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+  group_by(dist, quartile, name...25) %>%
+  summarise(med_meth = median(methylated_frequency)) %>%
+  distinct()
+
+p <- ggplot(chm13.ovl.labs,aes( x = dist, y = med_meth, color = as.factor(quartile)))+
+  geom_smooth(method = "loess", span = 0.2,se = F)+
+ # geom_smooth(se=F)+lims( y = c(0,1)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+ylim(0,1)+facet_wrap(~name...25)
+p
+
+#ggsave(
+#  paste0(figs, "/","Alu_full_length_quartiles_meta.pdf"),
+#  plot = p,
+#  scale = 1,
+#  width = 10,
+#  height = 10,
+#)
+
+```
+
+
+
+
+```{r}
+
+violin <- ggplot(data = meth_pro_L1, aes(y = factor(quartile), x = methylated_frequency))+geom_density_ridges(rel_min_height = 0.01,scale = 0.8,quantile_lines = TRUE, quantiles = 2, bandwidth = .05)+theme_classic(base_size = 20)+labs(x = "CpG density", y = "Repeat")+facet_wrap(~name)
+
+
+
+r1_full
+
+ggplot(r1_full, aes(x = name,y =(..count..)/sum(..count..),fill = as.factor(quartile)))+geom_bar()
+
+```
+
+
+
+
+
