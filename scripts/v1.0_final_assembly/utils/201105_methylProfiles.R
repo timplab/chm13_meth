@@ -21,14 +21,15 @@ figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/censat/figu
 dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
 
 # read methylation GRanges data
-chm13_meth <- readRDS(paste0(dat, "/methylation_calls/chm13_methylation_50kb.rds"))
+chm13_meth <- readRDS(paste0(dat, "/methylation_calls/chm13_methylation_NanopolishFreq_50kb.rds"))
 
 # centromere boundaries
 cen <- read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_regions.bed"), col_names = c("chr", "start", "end","name"))
 cen.gr <- GRanges(cen)
 
 #repeatmasker
-rm <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0.fasta_rm.bed"), col_names = F)
+rm <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0.fasta_rm.bed"), col_names = F) %>%
+  mutate(name = ifelse(X7 == "Satellite", X4, X7))
 
 keepi <- findOverlaps(chm13_meth,cen.gr)
 freq.matched <- chm13_meth[queryHits(keepi)]
@@ -41,16 +42,22 @@ mcols(freq.matched) <- cbind.data.frame(
 # use repeatmasker tracks for annotation, specify rm colors
 
 
-repeatColors =c("(CATTC)n" = "#E87C71",
+repeatColors =c("HSAT2"="#C19935",
+                "HSAT1"="#A2A638",
+                "HSAT3"="#8CAC3E",
+                "(CATTC)n" = "#E87C71",
+                "HSAT4"="#53B0E3",
+                "HSAT5"="#ED72A5",
+                "HSAT6"="#EF768C", 
                 "(GAATC)n"="#E28455",
                 "ALR/Alpha"="#D78C32",
+                "6kbHsap" = "#D8BFD8",
                 "BSR/Beta"="#E370AB",
                 "CER" = "#CE9334",
                 "DNA"="#C19935",
                 "DNA?"="#C19935",
-                "GSAT"="#B3A033",
-                "HSAT"="#A2A638",
-                "LINE"="#8CAC3E",
+                "GSAT"="#4169E1",
+                "LINE"="#FFA500",
                 "Low_complexity"="#75B042",
                 "LSAU"="#54B346",
                 "LTR"="#51B756",
@@ -59,8 +66,8 @@ repeatColors =c("(CATTC)n" = "#E87C71",
                 "RNA"="#54C0A5",
                 "rRNA"="#52BEBB",
                 "SAR"="#51BDCE",
-                "Satellite"="#4EB8DF",
-             #   "Satellite"="#53B0E3",
+                "SATR2"="#4EB8DF",
+                "GSATII"="#6B8E23",
                 "SATR1"="#5AA5DA",
                 "scRNA"="#6B9AD2",
                 "Simple_repeat"="#8992C8",
@@ -68,12 +75,17 @@ repeatColors =c("(CATTC)n" = "#E87C71",
                 "snRNA"="#A885BC",
                 "srpRNA"="#B67EB6",
                 "SST1"="#C378B2",
-                "Satellite"="#D173AF",
-                "tRNA"="#ED72A5",
-                "Unknown"="#EF768C", 
+                "HSATII"="#D173AF",
+                "tRNA"="#006400",
+                "ACRO1"="#9400D3",
+                "Unknown"="#BA55D3", 
                 "(GAATG)n"="#ff4000",
                 "D20S16" = "#ffbf00", 
-                "SATR2"= "#0080ff" )
+                "SATR2"= "#0080ff", 
+                "TAR1" = "#000080", 
+                "SUBTEL2_sat"= "#FFB6C1", 
+                "GSATX" = "#D2691E", 
+                "MSR1" = "#708090")
 
 defaultColor = "#000080"
 
@@ -93,7 +105,7 @@ censatColors =c("(CATTC)n" = "#E87C71",
                 "RNA"="#54C0A5",
                 "rRNA"="#52BEBB",
                 "SAR"="#51BDCE",
-                "ACRO"="#4EB8DF",
+                "ACRO1"="#9400D3",
                 "HSAT4"="#53B0E3",
                 "SATR"="#5AA5DA",
                 "CT"="#6B9AD2",
@@ -145,38 +157,35 @@ censat = read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_annotation.bed
 
 for (i in 1:length(cen$chr)){
   chr=cen$chr[i]
-  start=cen$start[i]
-  end=cen$end[i]
+  rstart=cen$start[i]
+  rend=cen$end[i]
 
-bis <- as.data.frame(freq.matched) %>% 
-  filter(seqnames == chr) %>%
-  arrange(start) %>%
- # summarise(meth_freq = mean(mcall), cov = n()) %>%
-  mutate(smooth = rollmean(meth, 500, fill = NA)) %>%
-  mutate(cov_smooth = rollmean(cov, 10000, fill = NA))
-
+bis <- as.data.frame(freq.matched) %>%
+    filter(seqnames == chr) %>%
+    mutate(smooth = rollmean(methylated_frequency, 200, fill = NA), cov_smooth = rollmean(called_sites, 1000, fill = NA))
+  
 rm_sub <- rm %>%
   filter(X1 == chr) %>%
-  filter(X2 > start) %>%
-  filter(X3 < end)
+  filter(X2 > rstart) %>%
+  filter(X3 < rend)
 
-meth <- ggplot(bis, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim((start/1e6),(end/1e6))
+meth <- ggplot(bis, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim((rstart/1e6),(rend/1e6))
 
-cov <- ggplot(bis, aes(x = (start/1e6), y= cov_smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Coverage")+theme_classic(base_size = 25)+xlim(start/1e6,end/1e6)
+cov <- ggplot(bis, aes(x = (start/1e6), y= cov_smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Called CpG sites")+theme_classic(base_size = 25)+xlim(rstart/1e6,rend/1e6)+ylim(0,100)
 
 
-rep_leg <- ggplot(data=rm_sub, mapping=aes(xmin=(X2/1e6),xmax=(X3/1e6),ymin=0,ymax=.1, fill = X7))+
-  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(start/1e6,end/1e6) +labs(y="Axis")+ scale_fill_manual(values = repeatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())
+rep_leg <- ggplot(data=rm_sub, mapping=aes(xmin=(X2/1e6),xmax=(X3/1e6),ymin=0,ymax=.1, fill = name))+
+  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(rstart/1e6,rend/1e6) +labs(y="Axis")+ scale_fill_manual(values = repeatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())
 
 
 censat_reg <- censat %>%
   filter(chrom == chr) 
 
 rep_leg2 <- ggplot(data=censat_reg, mapping=aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1, fill = name))+
-  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(start/1e6,end/1e6) +labs(y="Axis")+ scale_fill_manual(values = censatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())# +  theme_void()
+  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(rstart/1e6,rend/1e6) +labs(y="Axis")+ scale_fill_manual(values = censatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())# +  theme_void()
 
 
-top_row <- plot_grid(rep_leg,rep_leg2,meth,cov, ncol = 1, align="v", rel_heights = c(1/4,1/4, 1/2, 1/2))
+top_row <- plot_grid(rep_leg,meth,cov, ncol = 1, align="v", rel_heights = c(1/4, 1/2, 1/2))
 top_row
 
 

@@ -1,0 +1,63 @@
+---
+title: "GetDips.Rmd"
+author: "G$"
+date: "10/27/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/censat/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+censat = read_tsv(paste0(dat,"/annotations/t2t-chm13.v1.0.cenSat_annotation.bed"), col_names = F) %>% 
+  filter(grepl("hor", X4)) %>%
+  dplyr::rename("chrom" =1, "start" = 2 ,"end" =3, "hor" =4)%>%
+  GRanges()
+chm13_meth = readRDS(paste0(dat, "/methylation_calls/chm13_methylation_50kb.rds"))
+```
+unk like this:
+
+```{r censat, include=F}
+
+keepi <- findOverlaps(chm13_meth,censat)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(censat[subjectHits(keepi)]))
+
+censat.meth <- as.data.frame(freq.matched) %>%
+  group_by(seqnames, hor) %>%
+  mutate(smooth = rollmean(meth, 200, fill = NA)) %>%
+  filter(smooth < .25) %>%
+  summarise(rstart = min(start),rend = max(end)) %>%
+  mutate(size = rend-rstart) %>%
+  filter(size > 100000)
+```
+```{r}
+library("xts")
+  chr="chrX"
+startr=114150000
+endr=114160000
+#chr18:19,268,020-19,308,920
+meth <- as.data.frame(chm13_meth) %>%
+  filter(seqnames == chr) %>%
+  filter(start > startr) %>%
+  filter(end < endr ) %>%
+  mutate(start = (start-startr)) %>%
+  mutate(end = start) 
+#  mutate(smooth = rollmean(meth, 10, fill = NA)) %>%
+#  na.omit()
+
+
+NH <- zoo((meth$meth),order.by=meth$start)
+#periodicity(NH)
+
+
+acf2 <- acf(coredata(NH),  lag.max = 50 , main="Autocorrelation")
+
+plot <- ggplot(meth, aes(x = start, y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)#+xlim((rstart/1e6),(rend/1e6))
+plot
+```
+

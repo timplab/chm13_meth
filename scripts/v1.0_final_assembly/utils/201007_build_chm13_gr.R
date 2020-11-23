@@ -48,31 +48,27 @@ chm13 <- GRanges(sliding_blocks, CpG = chm13_CG)
 #saveRDS(chm13, file =paste0(dat, "/reference/chm13_sliding_200_CpG.rds"))
 chm13 <- readRDS(paste0(dat, "/reference/chm13_sliding_200_CpG.rds"))
 
-freq = read_tsv(paste0(dat, "/methylation_calls/CpGmethylation_50kb.freq"), col_names =F)
-bis = read.bismark(paste0(dat, "/methylation_calls/CpGmethylation_50kb.freq"))
-allcov <- getCoverage(bis)
+freq = read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb.tsv"))
+#bis = read.bismark(paste0(dat, "/methylation_calls/CpGmethylation_50kb.freq"))
+#allcov <- getCoverage(bis)
 
 #fifth <- quantile(allcov, probs = 0.05)
 #ninety_fifth <- quantile(allcov, probs = 0.95)
 # filter for for calls between the 5th and 95th perentile for coverage
 
-meth <- getMeth(bis, type = "raw")
-getmeth <- dplyr::as_tibble(cbind(freq$X1, freq$X2, meth,allcov))%>%
-  dplyr::rename("chrom" = 1, "start" = 2, "meth" = 3, "cov" = 4) %>%
-  dplyr::mutate("cov" = as.numeric(cov)) %>%
- # filter(cov < ninety_fifth) %>%
- # filter(cov >  fifth) %>%
-  mutate("meth" = as.numeric(meth)) %>%
-  mutate("start" = as.numeric(start)) %>%
-  mutate("chrom" = as.factor(chrom)) 
+#meth <- getMeth(bis, type = "raw")
+#getmeth <- dplyr::as_tibble(cbind(freq$X1, freq$X2, meth,allcov))%>%
+#  dplyr::rename("chrom" = 1, "start" = 2, "meth" = 3, "cov" = 4) %>%
+#  dplyr::mutate("cov" = as.numeric(cov)) %>%
+# # filter(cov < ninety_fifth) %>%
+# # filter(cov >  fifth) %>%
+#  mutate("meth" = as.numeric(meth)) %>%
+#  mutate("start" = as.numeric(start)) %>%
+#  mutate("chrom" = as.factor(chrom)) 
 
-summary(allcov)
-summary(getmeth$cov)
-freq_sub <- getmeth %>%
-  mutate("end" = start)
 
-freq.gr <- GRanges(freq_sub)
-saveRDS(freq.gr, file =paste0(dat, "/methylation_calls/chm13_methylation_50kb.rds"))
+freq.gr <- GRanges(freq)
+saveRDS(freq.gr, file =paste0(dat, "/methylation_calls/chm13_methylation_NanopolishFreq_50kb.rds"))
 
 keepi <- findOverlaps(freq.gr,chm13)
 freq.matched <- freq.gr[queryHits(keepi)]
