@@ -130,8 +130,8 @@ group_split(keep = T)
 names(calls.list) <- group_names
 smooth.list <- lapply(calls.list,smoothCalls, bandwidth = 300)
 calls.smooth <- bind_rows(smooth.list,.id = "qname")
-cgsmooth.list <- calls.smooth
-runs <- getRuns(cgsmooth.list)
+#cgsmooth.list <- calls.smooth
+#runs <- getRuns(cgsmooth.list)
 
 
 #ggplot(runs, aes(lengths))+geom_density()+xlim(0,1000)
@@ -141,7 +141,7 @@ runs <- getRuns(cgsmooth.list)
 
 ```{r binGC, include=F}
 
-# group smoothed reads based on position
+# group smoothed reads based on position, make into GRanges obj
 calls.gr <-  calls.smooth %>%
   ungroup() %>%
   group_by(start) %>%
