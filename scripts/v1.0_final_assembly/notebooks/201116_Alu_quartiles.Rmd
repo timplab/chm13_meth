@@ -1,0 +1,225 @@
+---
+title: "TE quartiles"
+author: "Ariel"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,  message=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(wesanderson)
+library(ggExtra)
+library(biovizBase)
+library(Repitools)
+library(Biostrings)
+library(ggplot2)
+library(BSgenome)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggridges)
+library(GenomicRanges)
+library(RColorBrewer)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+library(gridExtra) 
+library(pheatmap)
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/TE/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+chm13_meth <- readRDS(paste0(dat, "/methylation_calls/chm13_methylation_NanopolishFreq_50kb.rds"))
+
+r1.gr <- read_tsv(paste0(dat, "/proseq/chm13-5A_chm13.draft_v1.0_L1.overlap.bed"), col_names = c("chr", "start", "end", "thing", "cov")) %>%
+  GRanges()
+
+r2.gr <- read_tsv(paste0(dat, "/proseq/chm13-5B_chm13.draft_v1.0_L1.overlap.bed"), col_names = c("chr", "start", "end", "thing", "cov")) %>%
+  GRanges()
+```
+
+```{r proseq, echo=F}
+
+# SDs all 
+rm <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0.fasta_rm.bed"), col_names = F) %>%
+  filter(X8 == "L1") %>%
+  filter(X5 > 5500) %>%
+  dplyr::rename("chr" = 1, "start"=2, "end"=3, "rep"=4, "width"=5, "direction"=6, "rep_type"=7, "rep_class"=8)
+
+
+keepi <- findOverlaps(r1.gr,GRanges(rm))
+freq.matched <- r1.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(GRanges(rm)[subjectHits(keepi)]))
+
+r1_full <- as.data.frame(freq.matched)
+
+quants <- quantile(r1_full$cov)
+r1_full <- r1_full %>%
+  mutate(quant = case_when(cov >= quants[1] & cov < quants[2] ~ "0", 
+                           cov >= quants[2] & cov < quants[3] ~ "1", 
+                           cov >= quants[3] & cov < quants[4] ~ "2",
+                           cov >= quants[4] & cov < quants[5] ~ "3",
+                           cov >= quants[5] ~ "4"))
+
+
+
+keepi <- findOverlaps(chm13_meth,GRanges(r1_full))
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(GRanges(r1_full)[subjectHits(keepi)]))
+
+meth_pro_L1 <- as.data.frame(freq.matched)
+
+flankn <- 1000
+bodylen <- 2
+
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(GRanges(meth_pro_L1), l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end) 
+
+chm13.ovl <- as.data.frame(GRanges(meth_pro_L1)[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(direction...25 == "-",gene_end - start, start - gene_start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+chm13.ovl.labs <- chm13.ovl %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+  group_by(dist, quant) %>%
+  summarise(med_meth = median(methylated_frequency)) %>%
+  distinct()
+
+p <- ggplot(chm13.ovl.labs,aes( x = dist, y = med_meth, color = quant)) +
+  geom_smooth(method = "loess", span = 0.25,se = F)+
+ # geom_smooth(se=F)+lims( y = c(0,1)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+ylim(0,1)#+facet_wrap(~seqnames, scales = "free")
+p
+
+ggsave(
+  paste0(figs, "/","L1_full_length_quartiles_meta.pdf"),
+  plot = p,
+  scale = 1,
+  width = 10,
+  height = 5,
+)
+
+```
+
+
+```{r}
+p1 <- ggplot(meth_pro_L1, aes(y = quant, x = methylated_frequency, fill = quant))+geom_density_ridges()+labs(x = "Quartile", y = "Methylation Frequency")+geom_boxplot(width=.1)+theme_classic()
+
+violin <- ggplot(data = meth_pro_L1, aes(y = quant, x = methylated_frequency, fill = quant))+geom_density_ridges(rel_min_height = 0.01,scale = 0.9,quantile_lines = TRUE, quantiles = 2, bandwidth = .05)+theme_classic(base_size = 20)+labs(x = "Methylation Frequency", y = "PRO-seq Quartile")
+
+ggsave(
+  paste0(figs, "/","L1_full_length_quartiles_ggrridges.pdf"),
+  plot = violin,
+  scale = 1,
+  width = 10,
+  height = 10,
+)
+```
+
+
+
+```{r}
+meth_pro_L1_4 <- meth_pro_L1 %>%
+  filter(quant == 4)
+chrom.sizes <- read_tsv(paste0(dat, "/reference/chrom.sizes"), col_names = F)
+censat.gr <- read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_regions.bed"), col_names = c("chr", "start", "end", "name")) %>%
+  GRanges()
+cen <- as.data.frame(censat.gr) %>%
+  select(-c("strand", "name"))
+
+colnames(chrom.sizes) <- c("chromosome", "size")
+colnames(cen) <- c("chromosome", "start", "end", "width")
+
+chrom_order <- c("chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", 
+                 "chr8", "chr9", "chr10", "chr11", "chr12", "chr13", "chr14", 
+                 "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", "chr21", 
+                 "chr22", "chrX")
+chrom_key <- setNames(object = as.character(c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 
+                                              12, 13, 14, 15, 16, 17, 18, 19, 20, 
+                                              21, 22, 23)), 
+                      nm = chrom_order)
+chrom_order <- factor(x = chrom_order, levels = rev(chrom_order))
+
+# convert the chromosome column in each dataset to the ordered factor
+chrom.sizes[["chromosome"]] <- factor(x = chrom.sizes[["chromosome"]], 
+                                      levels = chrom_order)
+cen[["chromosome"]] <- factor(x = cen[["chromosome"]], 
+                                      levels = chrom_order)
+
+meth_pro_L1_4[["seqnames"]] <- factor(x = meth_pro_L1_4[["seqnames"]], 
+                                     levels = chrom_order)
+
+plot <- ggplot(data = chrom.sizes) + 
+    # base rectangles for the chroms, with numeric value for each chrom on the x-axis
+    geom_rect(aes(xmin = as.numeric(chromosome) - 0.2, 
+                  xmax = as.numeric(chromosome) + 0.2, 
+                  ymax = size, ymin = 0), 
+              colour="black", fill = "white") + 
+    # rotate the plot 90 degrees
+    coord_flip() +
+    # black & white color theme 
+    theme(axis.text.x = element_text(colour = "black"), 
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank()) + 
+    # give the appearance of a discrete axis with chrom labels
+    scale_x_discrete(name = "chromosome", limits = names(chrom_key)) +
+    # add bands for centromeres
+    geom_rect(data = cen, aes(xmin = as.numeric(chromosome) - 0.2, 
+                                      xmax = as.numeric(chromosome) + 0.2, 
+                                      ymax = end, ymin = start, alpha = .5)) +
+    # add bands for CNA value
+    geom_rect(data = meth_pro_L1_4, aes(xmin = as.numeric(seqnames) - 0.2, 
+                                     xmax = as.numeric(seqnames) + 0.2, 
+                                     ymax = end, ymin = start, color = quant)) 
+
+ggsave(
+  paste0(figs, "/","L1_fullLength_q4_ideogram.pdf"),
+  plot = plot,
+  scale = 1,
+  width = 10,
+  height = 10,
+)
+```
+
+
+
+

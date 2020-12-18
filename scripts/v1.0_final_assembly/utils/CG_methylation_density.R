@@ -64,14 +64,14 @@ repeatColors =c("(CATTC)n" = "#E87C71",
                 "HOR"="#D78C32",
                 "BSAT"="#E370AB",
                 "CER" = "#CE9334",
-                "HSAT2"="#C19935",
-                "HSAT1"="#A2A638",
+                "HSAT2"="#D173AF",
+                "HSAT1"="#51BDCE",
                 "HSAT3"="#8CAC3E",
                 "Low_complexity"="#75B042",
                 "LSAU"="#54B346",
                 "LTR"="#51B756",
                 "MST"="#53BB73",
-                "GSAT"="#55BE8D",
+                "GSAT"="#4169E1",
                 "RNA"="#54C0A5",
                 "rRNA"="#52BEBB",
                 "SAR"="#51BDCE",
@@ -91,7 +91,7 @@ repeatColors =c("(CATTC)n" = "#E87C71",
 
 # load CG and methylation GRanges data 
 chm13_CpG <- readRDS(paste0(dat, "/reference/chm13_sliding_200_CpG.rds"))
-chm13_meth <- readRDS(paste0(dat, "/methylation_calls/chm13_methylation_50kb.rds"))
+chm13_meth <- readRDS(paste0(dat, "/methylation_calls/chm13_methylation_NanopolishFreq_50kb.rds"))
 
 
 censat.gr <- GRanges(as.data.frame(censat))
@@ -121,7 +121,7 @@ for (i in list){
 
 # violing plot of methylation frequency
 
-  violin <- ggplot(data = censat_meth, aes(y = factor(name), x = meth, fill = name))+geom_density_ridges(rel_min_height = 0.01,scale = 0.9,quantile_lines = TRUE, quantiles = 2, bandwidth = .009)+theme_classic(base_size = 20)+ scale_fill_manual(values = repeatColors, drop = FALSE)+labs(x = "CpG density", y = "Repeat")
+  violin <- ggplot(data = censat_meth, aes(y = factor(name), x = methylated_frequency, fill = name))+geom_density_ridges(rel_min_height = 0.01,scale = 0.9,quantile_lines = TRUE, quantiles = 2, bandwidth = .009)+theme_classic(base_size = 20)+ scale_fill_manual(values = repeatColors, drop = FALSE)+labs(x = "Methylation", y = "Repeat")
 
 ggsave(
   paste0(figs, "/", name[n],"_methylation_freq.pdf"),

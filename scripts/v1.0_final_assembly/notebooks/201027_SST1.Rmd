@@ -23,9 +23,16 @@ library("ggsci")
 source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
 ```
 
-```{r mbed}
-figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/censat/figures"
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
 dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+chm13_meth <- read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb_split.tsv")) %>%
+  GRanges()
+
+r1 <- read_tsv(paste0(dat, "/TE/AllChrs_IlluminaPCRfree_20200922-assembly_21mers_single_meryl.over.CHM13-5A_proseq_cutadapt-2_bt2-vs-filtered_bt2-N0-k100-chm13-20200922_COV_RMoutEx.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) 
+
+#r2.gr <- read_tsv(paste0(dat, "/proseq/chm13-5B_chm13.draft_v1.0_Alu.overlap.bed"), col_names = c("chr", "start", "end", "thing", "cov")) %>%
+#  GRanges()
 
 censat = read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_annotation.bed"), col_names = F) %>%
   mutate(name = ifelse(grepl("HSat1", X4), "HSAT1", X4)) %>%
@@ -62,42 +69,172 @@ censat = read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_annotation.bed
   ungroup()
 table(censat$name)
 censat.gr <- GRanges(as.data.frame(censat))
-
-repeatColors =c("(CATTC)n" = "#E87C71",
-    "(GAATC)n"="#E28455",
-    "HOR"="#D78C32",
-    "BSAT"="#E370AB",
-    "CER" = "#CE9334",
-    "HSAT2"="#C19935",
-    "HSAT1"="#A2A638",
-    "HSAT3"="#8CAC3E",
-    "Low_complexity"="#75B042",
-    "LSAU"="#54B346",
-    "LTR"="#51B756",
-    "MST"="#53BB73",
-    "GSAT"="#55BE8D",
-    "RNA"="#54C0A5",
-    "rRNA"="#52BEBB",
-    "SAR"="#51BDCE",
-    "ACRO"="#4EB8DF",
-    "HSAT4"="#53B0E3",
-    "SATR"="#5AA5DA",
-    "CT"="#6B9AD2",
-    "Simple_repeat"="#8992C8",
-    "SINE"="#9A8AC1",
-    "MON"="#A885BC",
-    "SST"="#C378B2",
-    "HSAT5"="#ED72A5",
-    "HSAT6"="#EF768C", 
-    "gap-rDNA"="#ff4000",
-    "TE" = "#ffbf00", 
-   "TAR"= "#0080ff" )
-
+repeatColors =c("HSAT2"="#C19935",
+                "HSAT1"="#A2A638",
+                "HSAT3"="#8CAC3E",
+                "(CATTC)n" = "#E87C71",
+                "HSAT4"="#53B0E3",
+                "HSAT5"="#ED72A5",
+                "HSAT6"="#EF768C", 
+                "(GAATC)n"="#E28455",
+                "ALR/Alpha"="#D78C32",
+                "6kbHsap" = "#D8BFD8",
+                "BSR/Beta"="#E370AB",
+                "CER" = "#CE9334",
+                "DNA"="#C19935",
+                "DNA?"="#C19935",
+                "GSAT"="#4169E1",
+                "LINE"="#FFA500",
+                "Low_complexity"="#75B042",
+                "LSAU"="#54B346",
+                "LTR"="#51B756",
+                "RC"="#53BB73",
+                "Retroposon"="#55BE8D",
+                "RNA"="#54C0A5",
+                "rRNA"="#52BEBB",
+                "SAR"="#51BDCE",
+                "SATR2"="#4EB8DF",
+                "GSATII"="#6B8E23",
+                "SATR1"="#5AA5DA",
+                "scRNA"="#6B9AD2",
+                "Simple_repeat"="#8992C8",
+                "SINE"="#9A8AC1",
+                "snRNA"="#A885BC",
+                "srpRNA"="#B67EB6",
+                "SST1"="#C378B2",
+                "HSATII"="#D173AF",
+                "tRNA"="#006400",
+                "ACRO1"="#9400D3",
+                "Unknown"="#BA55D3", 
+                "(GAATG)n"="#ff4000",
+                "D20S16" = "#ffbf00", 
+                "SATR2"= "#0080ff", 
+                "TAR1" = "#000080", 
+                "SUBTEL2_sat"= "#FFB6C1", 
+                "GSATX" = "#D2691E", 
+                "MSR1" = "#708090")
+high_id <- read_tsv(paste0(dat, "/TE/SST1_highDev.bed")) %>%
+  GRanges()
 ```
 
 
+
+```{r cen, echo=T, fig.height=5, fig.width=6}
+# compare centromeric SST1 to non-centromeric SST1
+
+# centromere boundaries
+cen <- read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_regions.bed"), col_names = c("chr", "start", "end","name"))
+cen.gr <- GRanges(cen)
+
+chm13_CpG <- readRDS(paste0(dat, "/reference/chm13_sliding_200_CpG.rds"))
+
+#repeatmasker
+rm <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0.fasta_rm.bed"), col_names = F) %>%
+  mutate(name = ifelse(X7 == "Satellite", X4, X7)) %>%
+  filter(name == "SST1") %>%
+  filter(X5 > 1290) %>%
+  mutate(ID = row_number()) %>%
+  dplyr::rename("chr"=1, "start"=2, "end"=3) %>%
+  GRanges()
+
+keepi <- findOverlaps(rm,cen.gr)
+freq.matched <- rm[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(cen.gr[subjectHits(keepi)]))
+
+sst <- as.data.frame(rm) %>%
+  mutate(region = case_when(ID %in% freq.matched$ID ~ "centr", 
+                            TRUE ~ "non-centr")) %>%
+  group_by(seqnames, region) %>%
+  filter(n() > 10)
+
+# Send this table to Savannah for divergance calculations
+#write.table(sst, file = paste0(dat, "/TE/SST1_Cen_NonCen.bed"), append = FALSE, quote = F, sep = "\t", row.names = F, col.names = F)
+
+sst.gr <- GRanges(sst)
+
+keepi <- findOverlaps(chm13_meth,sst.gr)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(sst.gr[subjectHits(keepi)]))
+
+sst_meth <- as.data.frame(freq.matched)
+    
+
+
+violin <- ggplot(data = sst_meth, aes(y = factor(seqnames), x = methylated_frequency, fill = region))+geom_density_ridges(rel_min_height = 0.01,scale = 0.9,quantile_lines = TRUE, quantiles = 2, bandwidth = .025)+theme_classic(base_size = 20)+labs(x = "Methylation", y = "Repeat")
+
+
+ggsave(
+  paste0(figs, "/evol_meth/SST1/SST1_CenvsNonCen.pdf"),
+  plot = violin,
+  scale = 1,
+  width = 6,
+  height = 5,
+  dpi = 50
+)
+
+
+violin <- ggplot(data = sst_meth, aes(x = factor(region), y = methylated_frequency, fill = region))+geom_violin()+labs(x = "Methylation", y = "Repeat")+geom_boxplot(width=.1)+theme_classic()
+
+ggsave(
+  paste0(figs, "/evol_meth/SST1/SST1_CenvsNonCen_violin.pdf"),
+  plot = violin,
+  scale = 1,
+  width = 6,
+  height = 5,
+  dpi = 50
+)
+
+
+
+keepi <- findOverlaps(chm13_CpG,sst.gr)
+freq.matched <- chm13_CpG[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(sst.gr[subjectHits(keepi)]))
+
+sst_meth <- as.data.frame(freq.matched)
+
+  
+
+violin <- ggplot(data = sst_meth, aes(y = factor(region), x = CpG, fill = region))+geom_density_ridges(rel_min_height = 0.01,scale = 0.9,quantile_lines = TRUE, quantiles = 2, bandwidth = 1)+theme_classic(base_size = 20)+labs(x = "Methylation", y = "Repeat")
+
+ggsave(
+  paste0(figs, "/evol_meth/SST1/SST1_CenvsNonCen_CpG.pdf"),
+  plot = violin,
+  scale = 1,
+  width = 6,
+  height = 5,
+  dpi = 50
+)
+
+violin <- ggplot(data = sst_meth, aes(x = factor(region), y = CpG, fill = region))+geom_violin()+labs(x = "CpG Density", y = "Repeat")+geom_boxplot(width=.1)+theme_classic()
+
+ggsave(
+  paste0(figs, "/evol_meth/SST1/SST1_CenvsNonCen_CpG_violin.pdf"),
+  plot = violin,
+  scale = 1,
+  width = 6,
+  height = 5,
+  dpi = 50
+)
+
+```
+
 ```{r plot, echo=F}
 chr="chr19"
+region_start=39904951
+region_end= 40152064
+
+rm=r1
+
+
 
 reads <- tabix_mbed(paste0(dat, "/censat/", "chr19sst1.mbed"),extcol = "motif",by = "read") 
 #chrX:48,626,035-49,040,073
@@ -112,9 +249,150 @@ size_sel <- reads %>%
 cgcalls <- mbedByCall(size_sel) %>%
   drop_na(mcall)
 
-#38800000       39000000
-region_start=38550000
-region_end= 38550000+40000
+
+
+freq <- cgcalls %>%
+  filter(start > region_start) %>%
+  filter(end < region_end) %>%
+  group_by(start) %>%
+  summarise(freq = mean(mcall), cov = n()) %>%
+  mutate(smooth = rollmean(freq, 50, fill = NA), cov_smooth = rollmean(cov, 1000, fill = NA))
+
+reg_start <- as.data.frame(high_id)$start
+
+meth_CG <- ggplot(freq, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim(region_start/1e6, region_end/1e6)
+
+
+rm_sub <- rm %>%
+  filter(chr == "chr19") %>%
+  filter(start > region_start) %>%
+  filter(end < region_end)
+
+
+rep_leg <- ggplot(data=rm_sub, mapping=aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1, fill = rep_fam))+
+  geom_rect()+theme(legend.position="top") +labs(y="Axis")+labs(y="Axis")+ theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())+xlim(region_start/1e6,region_end/1e6)
+
+top_row <- plot_grid(rep_leg,meth_CG,ncol = 1, align="v", rel_heights = c(1/4, 1/2))
+top_row
+
+ggsave(
+  paste0(figs, "/evol_meth/SST1/chr19_SST1_Profile.pdf"),
+  plot = top_row,
+  scale = 1,
+  width = 10,
+  height = 8,
+  dpi = 50
+)
+```
+
+
+
+```{r}
+
+r1.gr <- r1 %>%
+  filter(rep_type=="SST1") %>%
+  filter(end-start > 1290) %>%
+  dplyr::mutate(ID = row_number()) %>%
+  GRanges()
+
+keepi <- findOverlaps(r1.gr,cen.gr)
+freq.matched <- r1.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(cen.gr[subjectHits(keepi)]))
+
+sst <- as.data.frame(r1.gr) %>%
+  mutate(region = case_when(ID %in% freq.matched$ID ~ "centr", 
+                            TRUE ~ "non-centr")) %>%
+  group_by(seqnames, region) %>%
+  filter(n() > 10)
+
+violin <- ggplot(data = sst, aes(x = factor(region), y = cov, fill = region))+geom_violin()+labs(y = "Log10(Coverage)")+geom_boxplot(width=.1)+theme_classic()+scale_y_log10()
+
+ggsave(
+  paste0(figs, "/evol_meth/SST1/SST1_Cen_nonCen_proseq.pdf"),
+  plot = violin,
+  scale = 1,
+  width = 10,
+  height = 8
+)
+
+```
+
+
+
+```{r}
+
+sst <- rm %>%
+  filter(rep_type == "SST1") %>%
+  filter(chr == "chr19") %>%
+  mutate(ID = row_number()) %>%
+  filter(end-start > 1290) %>%
+  mutate(repstart = start, repend = end) %>%
+  GRanges()
+
+keepi <- findOverlaps(chm13_meth,sst)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(sst[subjectHits(keepi)]))
+
+sst.meth <- as.data.frame(freq.matched) %>%
+  group_by(ID) %>%
+  summarise(start = min(repstart), end = max(repend), meth = mean(methylated_frequency), cov = mean(cov))
+
+
+ggplot(sst.meth, aes(x=as.factor(start), y=meth))+geom_bar(stat = "identity", position = "dodge")
+
+
+sst.meth.gr <- sst.meth %>%
+  mutate(seqnames = "chr19") %>%
+  GRanges()
+
+
+keepi <- findOverlaps(sst.meth.gr,high_id)
+freq.matched <- sst.meth.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(high_id[subjectHits(keepi)]))
+
+high_id.ID <- as.data.frame(freq.matched) %>%
+  select(ID)
+
+sst.meth.id <- sst.meth %>%
+  mutate(perc_id = case_when(ID %in% high_id.ID$ID ~ "High", 
+                             TRUE ~ "Low"))
+
+ggplot(sst.meth.id, aes(y = meth, x = perc_id, color = perc_id))+geom_violin()+geom_boxplot(width=.1, outlier.shape = NA)+theme_classic()+ylim(0,1)+labs(y = "Average Methylation Frequency", x = "SST1 Chr19 Percent Identity")
+
+```
+
+```{r}
+
+```
+
+
+```{r}
+
+reads <- tabix_mbed(paste0(dat, "/censat/", "chr19sst1.mbed"),extcol = "motif",by = "read") 
+#chrX:48,626,035-49,040,073
+
+
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+  filter(rlen >= 50000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+
+region_start=40044946
+region_end= 40051585
 reg = cgcalls %>%
   dplyr::filter(start >= region_start) %>%
   dplyr::filter(end <= region_end)
@@ -137,17 +415,23 @@ library(adagio)
 g <- ggplot(cpg_runs,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
     geom_rect(aes(fill = m))  +
 #    geom_vline(xintercept = 127638255, linetype == "dashed") +
-    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))
+    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+geom_vline(xintercept = c(40046542,40047472,40049068,40049995))
   
   print(g)
-
+ggsave(
+  paste0(figs, "/evol_meth/SST1/chr19_SST1_SingleRead.pdf"),
+  plot = g,
+  scale = 1,
+  width = 10,
+  height = 8
+)
 ```
 
 
-```{r plot, echo=F}
-chr="chr4"
 
-reads <- tabix_mbed(paste0(dat, "/censat/", "chr4sst1.mbed"),extcol = "motif",by = "read") 
+```{r plot, echo=F}
+
+reads <- tabix_mbed(paste0(dat, "/censat/", "chr21_sst1.mbed"),extcol = "motif",by = "read") 
 #chrX:48,626,035-49,040,073
 
 
@@ -161,8 +445,8 @@ cgcalls <- mbedByCall(size_sel) %>%
   drop_na(mcall)
 
 #38800000       39000000
-region_start=135040000
-region_end= 135080000
+region_start=10147221
+region_end= 10151336
 reg = cgcalls %>%
   dplyr::filter(start >= region_start) %>%
   dplyr::filter(end <= region_end)
@@ -180,13 +464,85 @@ pal <- pal_npg("nrc")(10)
 meth_pal <- c(pal[8],pal[4]) 
 #ids <- order(sapply(seq_along(gcruns.list),function(i){length(unique(gcruns.list$qname))}))
 
-library(adagio)
 
 g <- ggplot(cpg_runs,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
     geom_rect(aes(fill = m))  +
 #    geom_vline(xintercept = 127638255, linetype == "dashed") +
-    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))
+    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+geom_vline(xintercept = c(10148517,10148630,10149926,10150054))
   
   print(g)
 
+ggsave(
+  paste0(figs, "/evol_meth/SST1/chr21_SST1_SingleRead.pdf"),
+  plot = g,
+  scale = 1,
+  width = 10,
+  height = 8
+)
+
 ```
+
+
+
+
+
+```{r plot, echo=F}
+
+reads <- tabix_mbed(paste0(dat, "/censat/", "chr21_sst1.mbed"),extcol = "motif",by = "read") 
+#chrX:48,626,035-49,040,073
+
+
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+  filter(rlen >= 50000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+#38800000       39000000
+region_start=10113407-10000
+region_end= 10190326+10000
+reg = cgcalls %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end)
+
+q
+freq <- cgcalls %>%
+  filter(start > region_start) %>%
+  filter(end < region_end) %>%
+  group_by(start) %>%
+  summarise(freq = mean(mcall), cov = n()) %>%
+  mutate(smooth = rollmean(freq, 50, fill = NA), cov_smooth = rollmean(cov, 1000, fill = NA))
+
+reg_start <- as.data.frame(high_id)$start
+
+meth_CG <- ggplot(freq, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim(region_start/1e6, region_end/1e6)
+
+
+rm_sub <- rm %>%
+  filter(chr == "chr21") %>%
+  filter(start > region_start) %>%
+  filter(end < region_end)
+
+
+rep_leg <- ggplot(data=rm_sub, mapping=aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1, fill = rep_fam))+
+  geom_rect()+theme(legend.position="top") +labs(y="Axis")+labs(y="Axis")+ theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())+xlim(region_start/1e6,region_end/1e6)
+
+top_row <- plot_grid(rep_leg,meth_CG,ncol = 1, align="v", rel_heights = c(1/4, 1/2))
+top_row
+
+ggsave(
+  paste0(figs, "/evol_meth/SST1/chr21_SST1_Profile.pdf"),
+  plot = top_row,
+  scale = 1,
+  width = 10,
+  height = 8,
+  dpi = 50
+)
+
+```
+
+
+

@@ -133,7 +133,7 @@ labs <- coord %>%
   mutate(start1 = round(start1/1e6, digits = 2))
 
 
-upper_tri <- get_lower_tri(mat.end) 
+upper_tri <- get_upper_tri(mat.end) 
 
 melted_cormat <- melt(upper_tri, na.rm = TRUE) 
 

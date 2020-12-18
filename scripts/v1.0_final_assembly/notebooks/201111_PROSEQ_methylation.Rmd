@@ -1,0 +1,285 @@
+---
+title: "CENPA"
+author: "G$"
+date: "11/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)# load libraries
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+
+# set data output path
+
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/proseq/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+```
+
+```{r}
+r1.gr <- read_tsv(paste0(dat, "/proseq/chm13-5A_cenSat_overlap.bed"), col_names = c("chr", "start", "end", "thing", "cov")) %>%
+  GRanges()
+
+r2.gr <- read_tsv(paste0(dat, "/proseq/chm13-5B_cenSat_overlap.bed"), col_names = c("chr", "start", "end", "thing", "cov")) %>%
+  GRanges()
+
+chm13_meth <- readRDS(paste0(dat, "/methylation_calls/chm13_methylation_NanopolishFreq_50kb.rds"))
+rm <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0.fasta_rm.bed"), col_names = F) %>%
+  mutate(name = ifelse(X7 == "Satellite", X4, X7))
+
+
+repeatColors =c("HSAT2"="#C19935",
+                "HSAT1"="#A2A638",
+                "HSAT3"="#8CAC3E",
+                "(CATTC)n" = "#E87C71",
+                "HSAT4"="#53B0E3",
+                "HSAT5"="#ED72A5",
+                "HSAT6"="#EF768C", 
+                "(GAATC)n"="#E28455",
+                "ALR/Alpha"="#D78C32",
+                "6kbHsap" = "#D8BFD8",
+                "BSR/Beta"="#E370AB",
+                "CER" = "#CE9334",
+                "DNA"="#C19935",
+                "DNA?"="#C19935",
+                "GSAT"="#4169E1",
+                "LINE"="#FFA500",
+                "Low_complexity"="#75B042",
+                "LSAU"="#54B346",
+                "LTR"="#51B756",
+                "RC"="#53BB73",
+                "Retroposon"="#55BE8D",
+                "RNA"="#54C0A5",
+                "rRNA"="#52BEBB",
+                "SAR"="#51BDCE",
+                "SATR2"="#4EB8DF",
+                "GSATII"="#6B8E23",
+                "SATR1"="#5AA5DA",
+                "scRNA"="#6B9AD2",
+                "Simple_repeat"="#8992C8",
+                "SINE"="#9A8AC1",
+                "snRNA"="#A885BC",
+                "srpRNA"="#B67EB6",
+                "SST1"="#C378B2",
+                "HSATII"="#D173AF",
+                "tRNA"="#006400",
+                "ACRO1"="#9400D3",
+                "Unknown"="#BA55D3", 
+                "(GAATG)n"="#ff4000",
+                "D20S16" = "#ffbf00", 
+                "SATR2"= "#0080ff", 
+                "TAR1" = "#000080", 
+                "SUBTEL2_sat"= "#FFB6C1", 
+                "GSATX" = "#D2691E", 
+                "MSR1" = "#708090")
+```
+
+```{r}
+
+keepi <- findOverlaps(chm13_meth,r1.gr)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(r1.gr[subjectHits(keepi)]))
+
+
+cenp <- as.data.frame(freq.matched)
+quantile(cenp$cov, c(.75,.90,.95,.995))
+
+cenp <- cenp %>%
+  mutate(quant = case_when(cov > 1 & cov < 30 ~ "75", 
+                           cov >= 30 & cov < 34 ~ "90", 
+                           cov >= 34 & cov < 255 ~ "95",
+                           cov >= 255 ~ ">99.5",
+                           TRUE ~ "<75"))
+
+p1 <- ggplot(cenp, aes(x = quant, y = methylated_frequency, fill = quant))+geom_violin()+labs(x = "Quartile", y = "Methylation Frequency")+geom_boxplot(width=.1)+theme_classic()
+
+ggsave(
+  paste0(figs, "/proseq_meth_violin.pdf"),
+  plot = p1,
+  scale = 1,
+  width = 8,
+  height = 5,
+  dpi = 50
+)
+
+```
+
+```{r}
+
+chrom = "chr1"
+rstart=128000000
+rend=128750000
+bis <- as.data.frame(chm13_meth) %>%
+    filter(seqnames == chrom) %>%
+    filter(start > rstart) %>%
+    filter(end < rend) %>%
+    mutate(smooth = rollmean(methylated_frequency, 50, fill = NA), cov_smooth = rollmean(called_sites, 1000, fill = NA)) 
+  
+
+meth <- ggplot(bis, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim((rstart/1e6),(rend/1e6))
+
+bis <- as.data.frame(r1.gr) %>%
+   filter(seqnames == chrom) %>%
+   filter(start > rstart) %>%
+   filter(end < rend) 
+
+p2 <- ggplot(bis, aes(x = (start/1e6), y= cov, color = seqnames))+geom_histogram(stat = "identity", position = "jitter", show.legend = FALSE) + labs(x="Genomic coordinates (Mb)", y="PRO-Seq Coverage")+theme_classic(base_size = 25)+xlim(128000000/1e6,128750000/1e6)
+
+
+rm_sub <- rm %>%
+  filter(X1 == "chr1") %>%
+  filter(X2 > rstart) %>%
+  filter(X3 < rend)
+
+
+
+rep_leg <- ggplot(data=rm_sub, mapping=aes(xmin=(X2/1e6),xmax=(X3/1e6),ymin=0,ymax=.1, fill = name))+
+  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(rstart/1e6,rend/1e6) +labs(y="Axis")+ scale_fill_manual(values = repeatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())
+
+
+top_row <- plot_grid(rep_leg, meth,p2, ncol = 1, align="v",rel_heights = c(1/4, 1/2, 1/2))
+top_row
+
+ggsave(
+  paste0(figs, "/", chrom, "_BSAT_methyl_pattern.eps"),
+  plot = top_row,
+  scale = 1,
+  width = 10,
+  height = 12,
+  dpi = 50
+)
+ggplot(bis, aes(x = cov, y = methylated_frequency))+geom_point()
+
+
+```
+
+
+```{r}
+
+chrom = "chr5"
+rstart=49999052
+rend=50026968
+bis <- as.data.frame(chm13_meth) %>%
+    filter(seqnames == chrom) %>%
+    filter(start > rstart) %>%
+    filter(end < rend) %>%
+    mutate(smooth = rollmean(methylated_frequency, 20, fill = NA), cov_smooth = rollmean(called_sites, 1000, fill = NA)) 
+  
+
+meth <- ggplot(bis, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim((rstart/1e6),(rend/1e6))
+
+bis <- as.data.frame(r1.gr) %>%
+   filter(seqnames == chrom) %>%
+   filter(start > rstart) %>%
+   filter(end < rend) %>%
+  filter(cov > 1)
+
+p2 <- ggplot(bis, aes(x = (start/1e6), y= cov, color = seqnames))+geom_histogram(stat = "identity", position = "jitter", show.legend = FALSE) + labs(x="Genomic coordinates (Mb)", y="PRO-Seq Coverage")+theme_classic(base_size = 25)+xlim(rstart/1e6,rend/1e6)
+
+
+rm_sub <- rm %>%
+  filter(X1 == chrom) %>%
+  filter(X2 > rstart) %>%
+  filter(X3 < rend)
+
+
+
+rep_leg <- ggplot(data=rm_sub, mapping=aes(xmin=(X2/1e6),xmax=(X3/1e6),ymin=0,ymax=.1, fill = name))+
+  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(rstart/1e6,rend/1e6) +labs(y="Axis")+ scale_fill_manual(values = repeatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())
+
+
+top_row <- plot_grid(rep_leg, meth,p2, ncol = 1, align="v",rel_heights = c(1/4, 1/2, 1/2))
+top_row
+
+ggsave(
+  paste0(figs, "/", chrom, "_BSAT_methyl_pattern.eps"),
+  plot = top_row,
+  scale = 1,
+  width = 10,
+  height = 12,
+  dpi = 50
+)
+##ggplot(bis, aes(x = cov, y = methylated_frequency))+geom_point()
+
+
+```
+
+```{r}
+
+chrom = "chr22"
+rstart=6040192
+rend=6266121
+bis <- as.data.frame(chm13_meth) %>%
+    filter(seqnames == chrom) %>%
+    filter(start > rstart) %>%
+    filter(end < rend) %>%
+    mutate(smooth = rollmean(methylated_frequency, 100, fill = NA), cov_smooth = rollmean(called_sites, 1000, fill = NA)) 
+  
+
+meth <- ggplot(bis, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim((rstart/1e6),(rend/1e6))
+
+bis <- as.data.frame(r1.gr) %>%
+   filter(seqnames == chrom) %>%
+   filter(start > rstart) %>%
+   filter(end < rend) %>%
+  filter(cov > 1)
+
+p2 <- ggplot(bis, aes(x = (start/1e6), y= cov, color = seqnames))+geom_histogram(stat = "identity", position = "jitter", show.legend = FALSE) + labs(x="Genomic coordinates (Mb)", y="PRO-Seq Coverage")+theme_classic(base_size = 25)+xlim(rstart/1e6,rend/1e6)
+
+
+rm_sub <- rm %>%
+  filter(X1 == chrom) %>%
+  filter(X2 > rstart) %>%
+  filter(X3 < rend)
+
+
+
+rep_leg <- ggplot(data=rm_sub, mapping=aes(xmin=(X2/1e6),xmax=(X3/1e6),ymin=0,ymax=.1, fill = name))+
+  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(rstart/1e6,rend/1e6) +labs(y="Axis")+ scale_fill_manual(values = repeatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())
+
+
+top_row <- plot_grid(rep_leg, meth,p2, ncol = 1, align="v",rel_heights = c(1/4, 1/2, 1/2))
+top_row
+
+ggsave(
+  paste0(figs, "/", chrom, "_BSAT_methyl_pattern.eps"),
+  plot = top_row,
+  scale = 1,
+  width = 10,
+  height = 12,
+  dpi = 50
+)
+
+list=c("LSAU", "BSR/Beta")
+bis.gr <- GRanges(bis)
+rm.gr <- rm_sub %>%
+  dplyr::filter(X4 %in% list) %>%
+  dplyr::rename("chr"=1, "start"=2, "end"=3) %>%
+  GRanges()
+
+keepi <- findOverlaps(bis.gr,rm.gr)
+freq.matched <- bis.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(rm.gr[subjectHits(keepi)]))
+
+reps_meth <- as.data.frame(freq.matched)
+p1 <- ggplot(reps_meth, aes(x = X4, y = cov, fill = X4))+geom_point()+labs(x = "Quartile", y = "Methylation Frequency")+geom_boxplot(width=.1)+theme_classic()
+
+```
