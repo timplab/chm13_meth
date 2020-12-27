@@ -1,0 +1,309 @@
+---
+title: "load_methyl_bed"
+author: "G$"
+date: "9/3/2020"
+output: pdf_document
+---
+
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(mclust)
+```
+
+```{r mbed}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002"
+hg002_gc <- read_csv(paste0(dat, "/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_GpCmethylation_ByCall.csv"))
+hg002_meth <- read_csv(paste0(dat, "/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_CpGmethylation_ByCall.csv")) %>%
+  GRanges() 
+```
+
+```{r, function}
+
+  
+order_reads_facet <- function(x,offset = 0, bounds=NULL, qorder = NULL){
+  # get boundaries of reads if not provided
+  if (is.null(bounds)){
+    bounds <- x %>% group_by(qname, group) %>%
+      summarize(start = min(start),
+                end = max(end))
+    # label y based on order of smallest start
+    # if q order is given, use this to order
+    if (!is.null(qorder)) {
+      bounds <- bounds %>%
+        mutate(qname = factor(qname,levels = qorder)) %>%
+        arrange(qname) 
+    } else {
+      bounds<- bounds %>% 
+        arrange(start, end) 
+    }
+    bounds <- bounds %>%
+      ungroup() %>%
+      group_by(group) %>%
+        mutate(
+          readi = row_number(),
+          ymin = -readi - 0.8 - offset, 
+          ymax = ymin + 0.6)
+  }
+  
+  x <- x %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  bounds <- bounds %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  return(list(x = x,bounds = bounds))
+}
+
+order_reads_freq <- function(x,offset = 0, bounds=NULL, qorder = NULL){
+  # get boundaries of reads if not provided
+  if (is.null(bounds)){
+    bounds <- x %>% group_by(qname) %>%
+      summarize(start = min(start),
+                end = max(end))
+    # label y based on order of smallest start
+    # if q order is given, use this to order
+    if (!is.null(qorder)) {
+      bounds <- bounds %>%
+        mutate(qname = factor(qname,levels = qorder)) %>%
+        arrange(qname) 
+    } else {
+      bounds<- bounds %>% 
+        arrange(start, end) 
+    }
+    bounds <- bounds %>%
+        mutate(
+          readi = seq_len(length(unique(x$qname))),
+          ymin = -readi - 0.8 - offset, 
+          ymax = ymin + 0.6)
+  }
+  x <- x %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  bounds <- bounds %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  return(list(x = x,bounds = bounds))
+}
+
+smoothCalls <- function(calls,what = c("all","site"),reg=NULL,bandwidth = 40,thr = 0.2,pad = 1000){
+  # "what" is whether I'm only calling on the sites or estimating every nucleotide; default all
+  if (length(what) != 1){ what = "all" }
+  calls <- calls %>%
+    mutate(mcall = ifelse(abs(score)>1,sign(score),score)) # ceiling based on log-lik ratio 
+  if (is.null(reg)) {
+    if (what == "site"){ 
+      xpoints <- calls$start
+    } else if (what == "all"){ 
+      xpoints <- seq(min(calls$start),max(calls$start))
+    }
+  } else {
+    reg <- as_tibble(reg)
+    # pad by 1kb each side to include runs going outside the region
+    if ( what == "site"){
+      xpoints <- calls %>% 
+        filter(start >= reg$start - pad , start <= reg$end + pad) %>% 
+        .$start
+    } else if (what == "all") { 
+      xpoints <- seq(reg$start-pad,reg$end+pad)
+    }
+  }
+  ks <- ksmooth(calls$start,calls$mcall,bandwidth = bandwidth,kernel = "normal",x.points = xpoints)
+  tibble(
+    chrom = calls$chrom[1],
+    start = ks$x,
+    end = start,
+    qname = calls$qname[1],
+    llr_smooth = ks$y, 
+    mcall = case_when(
+      llr_smooth > thr ~ 1,
+      llr_smooth < -thr ~ 0,
+      TRUE ~ -1)
+  )
+}
+
+```
+
+```{r}
+
+startr=55942867
+endr=55942883
+bind=(startr+endr)/2
+
+calls.reg <- as.data.frame(hg002_gc) %>%
+  filter(start > startr-500) %>%
+  filter(end < endr+500) %>%
+    group_by(qname)
+
+call.cpg <- as.data.frame(hg002_meth)%>%
+  filter(start > startr-500) %>%
+  filter(end < endr+500) 
+
+group_names <- group_keys(calls.reg)$qname
+
+calls.list <- calls.reg %>% 
+group_split(keep = T)
+
+names(calls.list) <- group_names
+smooth.list <- lapply(calls.list,smoothCalls)
+calls.smooth <- bind_rows(smooth.list,.id = "qname")
+cgsmooth.list <- calls.smooth
+```
+
+
+```{r}
+runs <- getRuns(cgsmooth.list)
+cpg_runs <- getRuns(call.cpg, maxGap = 2)
+gpc_runs <- getRuns(calls.reg, maxGap = 2)
+
+gsmoothruns.list <- runs
+
+  smoothruns <- gsmoothruns.list
+  smoothruns.ordered <- order_reads(smoothruns)
+  runs <- smoothruns.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Accessible","Inaccessible")) %>%
+    mutate(mod = "GpC")
+
+  groups <- call.cpg %>%
+  filter(start > startr) %>%
+  filter(end < endr) %>%
+  group_by(qname) %>%
+  summarise(num_meth = sum(mcall)) %>%
+  mutate(group = case_when(num_meth > 0 ~ "meth", 
+                           TRUE ~ "unmeth")) %>%
+  select(c(qname, group))
+
+
+cpg_runs <- getRuns(call.cpg, maxGap = 2)
+cpg_grouped <- merge(cpg_runs, groups, by = "qname")
+
+ cpg.ordered <- order_reads_facet(cpg_grouped)
+  cpg <-  cpg.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+  
+gpc_runs <- getRuns(calls.reg, maxGap = 2)
+
+gpc_grouped <- merge(smoothruns, groups, by = "qname")
+
+ gpc.ordered <- order_reads_facet(gpc_grouped)
+  gpc <-  gpc.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Open","Closed")) %>%
+    mutate(mod = "GpC")
+
+  all_runs <- rbind(gpc, cpg)
+g <- ggplot(all_runs, aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) + geom_rect(data = gpc.ordered$bounds, fill = "grey80")+ geom_rect(aes(fill = m)) +
+  scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"), legend.position = "bottom")+geom_vline(xintercept = c (startr,endr), linetype = "dashed")+facet_wrap(~group+mod, ncol=2)#+coord_cartesian(xlim=(c(37595000,37600000)))
+print(g)
+
+ggsave(
+  paste0(figs, "/HG002_CENPB_57558754.pdf"),
+  plot = g,
+  width = 10,
+  height = 10
+)
+
+```
+
+
+
+```{r}
+
+cenpb <- read_delim(paste0(dat, "/reference/chrx_fuzznuc.bed"), delim = " ") %>%
+  as.data.frame() %>%
+  ungroup() %>%
+  mutate("start" = as.numeric(`  Start`), "end" = as.numeric(`    End`)) %>%
+  select(-c (`  Start`, `    End`)) %>%
+  mutate(center = (end + start)/2, chr = "chrX") %>%
+  mutate(id = row_number()) %>%
+  mutate("rstart" = start, "rend" = end) %>%
+  GRanges()
+
+
+keepi <- findOverlaps(hg002_meth,cenpb)
+
+freq.matched <- hg002_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(cenpb[subjectHits(keepi)]))
+
+cenpb_meth <- as.data.frame(freq.matched) %>%
+  group_by(id, qname, center) %>%
+  summarise(meth = sum(mcall), start = rstart, end = rend) %>%
+  distinct()
+
+saveRDS(cenpb_meth, file = paste0(dat, "/CENPB_MethylatedSites.rds"))
+
+flankn <- 600
+hg002.gr <- hg002_gc %>%
+  GRanges()
+
+ regions <- as.data.frame(cenpb) %>%
+    mutate(start = start -flankn, end = end +flankn) %>%
+    GRanges()
+ 
+keepi <- findOverlaps(hg002.gr,regions)
+
+freq.matched <- hg002.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(regions[subjectHits(keepi)]))
+
+cenpb_GpC <- as.data.frame(freq.matched) 
+
+saveRDS(cenpb_GpC, file = paste0(dat, "/CENPB_GC_readLevelOverlaps.rds"))
+```
+
+
+```{r}
+
+
+
+flankn <- 500
+
+return.dat <- data.frame()
+for (i in 1:length(unique(cenpb_meth$qname))){
+  n=unique(cenpb_meth$qname)[i]
+  
+  regs.dat <- cenpb_meth %>%
+    filter(qname == n) %>%
+    mutate(seqnames = "chrX") %>%
+    mutate(start = start -flankn, end = end +flankn) %>%
+    GRanges()
+    
+  meth.dat <- cenpb_GpC %>%
+    filter(qname == n) %>%
+    GRanges()
+  
+keepi <- findOverlaps(meth.dat,regs.dat)
+
+freq.matched <- meth.dat[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(regs.dat[subjectHits(keepi)]))
+
+df <- as.data.frame(freq.matched)
+return.dat <- rbind(df, return.dat)
+
+}
+
+saveRDS(return.dat, file = paste0(dat, "/CENPB_GC_readLevel2.rds"))
+
+```

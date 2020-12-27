@@ -1,0 +1,347 @@
+---
+title: "Read plots"
+author: "G$"
+date: "9/3/2020"
+output: pdf_document
+---
+
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggpmisc)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+# read methylation GRanges data
+chm13_meth <- read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb_split.tsv")) %>%
+  mutate(called_sites_unmethylated = called_sites - called_sites_methylated) %>%
+  GRanges()
+# centromere boundaries
+cen <- read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_regions.bed"), col_names = c("chr", "start", "end","name"))
+cen.gr <- GRanges(cen)
+
+hg002_acc <- readRDS("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/nanonome/methylation_calls/pooled/ChrX_accessibilityZscore.rds")
+
+hg002_meth <- read_csv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_CpGmethylation_ByCall.csv")
+
+hg002_meth.gr <- hg002_meth %>%
+  group_by(chrom, start, end) %>%
+  summarise(called_sites_methylated = sum(mcall == 1), called_sites_unmethylated = sum(mcall == 0), called_sites =called_sites_methylated+ called_sites_unmethylated, methylated_frequency =(called_sites_methylated/called_sites)) %>%
+  GRanges()
+  
+  
+```
+
+```{r}
+hg002_acc.smooth <- hg002_acc %>%
+  ungroup() %>%
+  arrange(start) %>%
+  mutate(smooth = rollmean(z_score, 30, fill = NA)) 
+
+ggplot(hg002_acc.smooth, aes(x = start, y =z_score ))+geom_line()
+
+meth_GC <- ggplot(hg002_acc, aes(x = start/1e6, y= z_score))+geom_bar(stat = "identity", position = "dodge")+ylim(-4,5)+labs(x="Genomic coordinates (Mb)", y="Accessibility Z-score")+theme_classic(base_size = 25)+theme(legend.position = "bottom")
+
+
+```
+
+
+
+```{r}
+chr="chrX"
+  library(BSgenome.t2t.v1.0.release)
+  
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+  binnedMean <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewMeans(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+  
+
+
+chr.meth <- chm13_meth[seqnames(chm13_meth) == chr]
+    
+  
+  blocks <- genomeBlocks(BSgenome.t2t.v1.0.release, chrs = seqnames(BSgenome.t2t.v1.0.release), width = 15000)
+  score1 <- coverage(chr.meth, weight="called_sites_methylated")
+  score2 <- coverage(chr.meth, weight="called_sites_unmethylated")
+  score3 <- coverage(chr.meth, weight="num_motifs_in_group")
+  
+  
+  binned_meth <- binnedSum(blocks, numvar = score1, "called_sites_methylated") %>%
+    as.data.frame()
+  binned_unmeth <-binnedSum(blocks, numvar = score2, "called_sites_unmethylated")%>%
+    as.data.frame()
+  binned_cov <- binnedMean(blocks, numvar = score3, "num_motifs_in_group") %>%
+    as.data.frame()
+  
+
+  
+chm13_meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames", "width", "strand")) %>%
+  merge(binned_cov, by = c("start", "end", "seqnames", "width", "strand")) %>%
+    filter(seqnames == chr) %>%
+    group_by(start, end) %>%
+    mutate(sites = called_sites_methylated+called_sites_unmethylated) %>%
+    mutate(freq = called_sites_methylated/sites) %>%
+    ungroup()
+
+```
+
+```{r}
+chr="chrX"
+ library(BSgenome.HG002.chrX)
+chrx.gr <- GRanges(seqinfo(BSgenome.HG002.chrX))
+
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 15000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+  binnedMean <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewMeans(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+  
+
+
+chr.meth <- hg002_meth.gr[seqnames(hg002_meth.gr) == chr]
+    
+
+  score1 <- coverage(chr.meth, weight="called_sites_methylated")
+  score2 <- coverage(chr.meth, weight="called_sites_unmethylated")
+  score3 <- coverage(chr.meth, weight="called_sites")
+  
+  
+  binned_meth <- binnedSum(blocks, numvar = score1, "called_sites_methylated") %>%
+    as.data.frame()
+  binned_unmeth <-binnedSum(blocks, numvar = score2, "called_sites_unmethylated")%>%
+    as.data.frame()
+  binned_cov <- binnedMean(blocks, numvar = score3, "num_motifs_in_group") %>%
+    as.data.frame()
+  
+
+  
+hg002_meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames", "width", "strand")) %>%
+  merge(binned_cov, by = c("start", "end", "seqnames", "width", "strand")) %>%
+    filter(seqnames == chr) %>%
+    group_by(start, end) %>%
+    mutate(sites = called_sites_methylated+called_sites_unmethylated) %>%
+    mutate(freq = called_sites_methylated/sites) %>%
+    ungroup()
+
+```
+
+
+```{r}
+
+chrom.sizes <- read_tsv(paste0("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/reference/reference.fasta.fai"), col_names = F) %>%
+  filter(X1 == "chrX")
+
+
+colnames(chrom.sizes) <- c("chromosome", "size")
+
+chrom_order <- c("chrX")
+chrom_key <- setNames(object = as.character(c(1)), 
+                      nm = chrom_order)
+chrom_order <- factor(x = chrom_order, levels = rev(chrom_order))
+
+# convert the chromosome column in each dataset to the ordered factor
+chrom.sizes[["chromosome"]] <- factor(x = chrom.sizes[["chromosome"]], 
+                                      levels = chrom_order)
+
+hg002_acc[["chromosome"]] <- factor(x = hg002_acc[["seqnames"]], 
+                                     levels = chrom_order)
+hg002_meth_bins[["chromosome"]] <- factor(x = hg002_meth_bins[["seqnames"]], 
+                                     levels = chrom_order)
+
+plot1 <- ggplot(data = chrom.sizes) + 
+    # base rectangles for the chroms, with numeric value for each chrom on the x-axis
+    geom_rect(aes(xmin = as.numeric(chromosome) - 0.2, 
+                  xmax = as.numeric(chromosome) + 0.2, 
+                  ymax = size, ymin = 0), 
+              colour="black", fill = "white") + 
+    # rotate the plot 90 degrees
+    coord_flip() +
+    # black & white color theme 
+    theme(axis.text.x = element_text(colour = "black"), 
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank()) + 
+    # give the appearance of a discrete axis with chrom labels
+    scale_x_discrete(name = "chromosome", limits = names(chrom_key)) +
+
+    # add bands for CNA value
+    geom_rect(data = hg002_acc, aes(xmin = as.numeric(chromosome) - 0.2, 
+                                     xmax = as.numeric(chromosome) + 0.2, 
+                                     ymax = end, ymin = start, fill = z_score))
+
+p1 <- plot1+scale_fill_gradient2(midpoint=0, low="darkmagenta", mid="white",
+                     high="darkorange2", space ="Lab" ) 
+
+plot2 <- ggplot(data = chrom.sizes) + 
+    # base rectangles for the chroms, with numeric value for each chrom on the x-axis
+    geom_rect(aes(xmin = as.numeric(chromosome) - 0.2, 
+                  xmax = as.numeric(chromosome) + 0.2, 
+                  ymax = size, ymin = 0), 
+              colour="black", fill = "white") + 
+    # rotate the plot 90 degrees
+    coord_flip() +
+    # black & white color theme 
+    theme(axis.text.x = element_text(colour = "black"), 
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank()) + 
+    # give the appearance of a discrete axis with chrom labels
+    scale_x_discrete(name = "chromosome", limits = names(chrom_key)) +
+
+    # add bands for CNA value
+    geom_rect(data = hg002_meth_bins, aes(xmin = as.numeric(chromosome) - 0.2, 
+                                     xmax = as.numeric(chromosome) + 0.2, 
+                                     ymax = end, ymin = start, fill = freq))
+
+p2 <-  plot2+scale_fill_gradient2(midpoint=.5, low="blue", mid="white",
+                     high="red", space ="Lab" ) 
+
+ggsave(
+  paste0(figs, "/HG002_AccessibilityIdeo.pdf"),
+  plot = p1,
+  scale = 1,
+  width = 10,
+  height = 3
+)
+
+ggsave(
+  paste0(figs, "/HG002_MethylationIdeo.pdf"),
+  plot = p2,
+  scale = 1,
+  width = 10,
+  height = 3
+)
+```
+
+```{r}
+
+chrom.sizes <- read_tsv(paste0(dat, "/reference/chrom.sizes"), col_names = F) %>%
+  filter(X1 == "chrX")
+
+
+colnames(chrom.sizes) <- c("chromosome", "size")
+
+chrom_order <- c("chrX")
+chrom_key <- setNames(object = as.character(c(1)), 
+                      nm = chrom_order)
+chrom_order <- factor(x = chrom_order, levels = rev(chrom_order))
+
+# convert the chromosome column in each dataset to the ordered factor
+chrom.sizes[["chromosome"]] <- factor(x = chrom.sizes[["chromosome"]], 
+                                      levels = chrom_order)
+
+chm13_meth_bins[["chromosome"]] <- factor(x = chm13_meth_bins[["seqnames"]], 
+                                     levels = chrom_order)
+
+plot2 <- ggplot(data = chrom.sizes) + 
+    # base rectangles for the chroms, with numeric value for each chrom on the x-axis
+    geom_rect(aes(xmin = as.numeric(chromosome) - 0.2, 
+                  xmax = as.numeric(chromosome) + 0.2, 
+                  ymax = size, ymin = 0), 
+              colour="black", fill = "white") + 
+    # rotate the plot 90 degrees
+    coord_flip() +
+    # black & white color theme 
+    theme(axis.text.x = element_text(colour = "black"), 
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank()) + 
+    # give the appearance of a discrete axis with chrom labels
+    scale_x_discrete(name = "chromosome", limits = names(chrom_key)) +
+
+    # add bands for CNA value
+    geom_rect(data = chm13_meth_bins, aes(xmin = as.numeric(chromosome) - 0.2, 
+                                     xmax = as.numeric(chromosome) + 0.2, 
+                                     ymax = end, ymin = start, fill = freq))
+
+p3 <- plot2+scale_fill_gradient2(midpoint=.5, low="blue", mid="white",
+                     high="red", space ="Lab" )
+
+ggsave(
+  paste0(figs, "/CHM13X_MethylationIdeo.pdf"),
+  plot = p3,
+  scale = 1,
+  width = 10,
+  height = 3
+)
+
+```
+
+

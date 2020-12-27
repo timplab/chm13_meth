@@ -1,6 +1,14 @@
-#!/usr/bin/env Rscript
+---
+title: "Read plots"
+author: "G$"
+date: "9/3/2020"
+output: pdf_document
+---
 
-# load libraries
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
 library(tidyverse)
 library(bsseq)
 library(Biostrings)
@@ -9,14 +17,15 @@ library(png)
 library(cowplot)
 options(scipen=999)
 library(zoo)
+library(ggpmisc)
 library(BSgenome.t2t.v1.0.release)
 options(knitr.duplicate.label = 'allow')
 source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
 library("ggsci")
 source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
 
-# set data output path
-
+```{r mbed}
 figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
 dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
 
@@ -156,15 +165,33 @@ censat = read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_annotation.bed
   filter(n() >= 3) %>%
   ungroup()
 
+```
 
-for (i in 1:length(cen$chr)){
-  chr=cen$chr[i]
-  rstart=cen$start[i]
-  rend=cen$end[i]
-  
-  library(BSgenome.t2t.v1.0.release)
-  
-  binnedSum <- function(bins, numvar, mcolname)
+```{r load, include=F}
+chr="chr19"
+reads <- tabix_mbed(paste0(dat, "/censat/", chr, "_cen.mbed"),extcol = "motif",by = "read") 
+#chrX:48,626,035-49,040,073
+
+
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+  filter(rlen >= 50000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+
+```
+
+```{r}
+
+region_start=23503453
+region_end= 31310969
+
+
+ binnedSum <- function(bins, numvar, mcolname)
   {
     stopifnot(is(bins, "GRanges"))
     stopifnot(is(numvar, "RleList"))
@@ -221,8 +248,8 @@ chr.meth <- chm13_meth[seqnames(chm13_meth) == chr]
 meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames", "width", "strand")) %>%
   merge(binned_cov, by = c("start", "end", "seqnames", "width", "strand")) %>%
     filter(seqnames == chr) %>%
-    filter(start > rstart) %>%
-    filter(end < rend) %>%
+    filter(start > region_start) %>%
+    filter(end < region_end) %>%
     group_by(start, end) %>%
     mutate(sites = called_sites_methylated+called_sites_unmethylated) %>%
     mutate(freq = called_sites_methylated/sites) %>%
@@ -232,36 +259,164 @@ meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames"
   
 rm_sub <- rm %>%
   filter(X1 == chr) %>%
-  filter(X2 > rstart) %>%
-  filter(X3 < rend)
+  filter(X2 > region_start) %>%
+  filter(X3 < region_end)
 
-meth <- ggplot(meth_bins, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim((rstart/1e6),(rend/1e6))
+meth <- ggplot(meth_bins, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim((region_start/1e6),(region_end/1e6))+geom_vline(xintercept = c(26250000/1e6,26350000/1e6, 28250000/1e6,28350000/1e6,24850000/1e6,24950000/1e6))
 
-cov <- ggplot(meth_bins, aes(x = (start/1e6), y= site_smooth))+geom_line(size =1)+ labs(x="Genomic coordinates (Mb)", y="CpG Density")+theme_classic(base_size = 25)+xlim(rstart/1e6,rend/1e6)
+cov <- ggplot(meth_bins, aes(x = (start/1e6), y= site_smooth))+geom_line(size =1)+ labs(x="Genomic coordinates (Mb)", y="CpG Density")+theme_classic(base_size = 25)+xlim((region_start/1e6),(region_end/1e6))
 
 
 rep_leg <- ggplot(data=rm_sub, mapping=aes(xmin=(X2/1e6),xmax=(X3/1e6),ymin=0,ymax=.1, fill = name))+
-  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(rstart/1e6,rend/1e6) +labs(y="Axis")+ scale_fill_manual(values = repeatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())
+  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim((region_start/1e6),(region_end/1e6)) +labs(y="Axis")+ scale_fill_manual(values = repeatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())
 
 
 censat_reg <- censat %>%
   filter(chrom == chr) 
 
 rep_leg2 <- ggplot(data=censat_reg, mapping=aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1, fill = name))+
-  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(rstart/1e6,rend/1e6) +labs(y="Axis")+ scale_fill_manual(values = censatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())# +  theme_void()
+  geom_rect()+theme(legend.position="top") +labs(y="Axis") +labs(y="Axis")+ scale_fill_manual(values = censatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())+coord_cartesian(xlim=c((region_start/1e6),(region_end/1e6)))
 
-
-top_row <- plot_grid(rep_leg2,meth,cov, ncol = 1, align="v", rel_heights = c(1/4, 1/2, 1/2))
+top_row <- plot_grid(rep_leg2,meth, ncol = 1, align="v", rel_heights = c(1/4, 1/2, 1/2))
 top_row
 
-
-ggsave(
-  paste0(figs, "/methyl_profiles/", chr, "_HOR_methyl_pattern.pdf"),
+ ggsave(
+  paste0(figs, "/", chr, "_singleread_HOR.pdf"),
   plot = top_row,
   scale = 1,
   width = 10,
-  height = 12,
-  dpi = 50
+  height = 5,
 )
+```
 
-}
+```{r smooth_plots, echo=F}
+
+# 121796217       126300654
+region_start=26250000
+region_end= 26350000
+
+reg = cgcalls %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end)
+  
+
+runs <- getRuns(reg, maxGap = 100)
+
+
+cpg_runs.ordered <- order_reads(runs)
+  
+  cpg_runs <- cpg_runs.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+
+```
+
+
+
+```{r plot, echo=F}
+
+
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+unsmooth <- ggplot(cpg_runs,aes(xmin = start/1e6, xmax = end/1e6, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
+    geom_rect(aes(fill = m))  +
+#    geom_vline(xintercept = 127638255, linetype == "dashed") +
+    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"), legend.position = "bottom")
+  
+print(unsmooth) 
+
+ ggsave(
+  paste0(figs, "/", chr, "_dip_singleread_HOR.pdf"),
+  plot = unsmooth,
+  scale = 1,
+  width = 5,
+  height = 5,
+)
+```
+```{r smooth_plots, echo=F}
+
+# 121796217       126300654
+region_start=28250000
+region_end= 28350000
+
+reg = cgcalls %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end)
+  
+
+runs <- getRuns(reg, maxGap = 100)
+
+
+cpg_runs.ordered <- order_reads(runs)
+  
+  cpg_runs <- cpg_runs.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+
+```
+
+```{r plot, echo=F}
+
+
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+unsmooth <- ggplot(cpg_runs,aes(xmin = start/1e6, xmax = end/1e6, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
+    geom_rect(aes(fill = m))  +
+#    geom_vline(xintercept = 127638255, linetype == "dashed") +
+    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"), legend.position = "bottom")
+  
+print(unsmooth) 
+
+ ggsave(
+  paste0(figs, "/", chr, "_live_singleread_HOR.pdf"),
+  plot = unsmooth,
+  scale = 1,
+  width = 5,
+  height = 5,
+)
+```
+
+```{r smooth_plots, echo=F}
+
+# 121796217       126300654
+region_start=24850000
+region_end= 24950000
+
+reg = cgcalls %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end)
+  
+
+runs <- getRuns(reg, maxGap = 100)
+
+
+cpg_runs.ordered <- order_reads(runs)
+  
+  cpg_runs <- cpg_runs.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+
+```
+
+
+
+```{r plot, echo=F}
+
+
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+unsmooth <- ggplot(cpg_runs,aes(xmin = start/1e6, xmax = end/1e6, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
+    geom_rect(aes(fill = m))  +
+#    geom_vline(xintercept = 127638255, linetype == "dashed") +
+    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"), legend.position = "bottom")
+  
+print(unsmooth) 
+
+ ggsave(
+  paste0(figs, "/", chr, "_dead_singleread_HOR.pdf"),
+  plot = unsmooth,
+  scale = 1,
+  width = 5,
+  height = 5,
+)
+```
