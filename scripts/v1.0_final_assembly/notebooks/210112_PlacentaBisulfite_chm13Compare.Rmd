@@ -1,0 +1,193 @@
+---
+title: "Methylation Comparison"
+author: "G$"
+date: "1/12/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r dat, echo=FALSE}
+library(liftOver)
+library(rtracklayer)
+
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/"
+ch = import.chain("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/bisulfite/liftover/t2t-chm13-v1.0.hg38.over.chain")
+ch
+
+chm13_meth <- read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb_split.tsv")) %>%
+  GRanges()
+
+hg38_meth = liftOver(chm13_meth, ch)
+hg38_meth <- unlist(hg38_meth)
+
+```
+
+```{r}
+placenta2 <- data.frame()
+for (i in 1:22){
+ bis <- read_tsv(paste0(dat, "/bisulfite/GSE39775/GSM1083880_placenta2_MethylC-seq_chr",i,".BED.gz"), skip=1, col_names = F)
+ 
+placenta2 <- rbind(bis,placenta2)
+}
+
+ x <- read_tsv(paste0(dat, "/bisulfite/GSE39775/GSM1083880_placenta2_MethylC-seq_chrX",".BED.gz"), skip=1, col_names = F)
+y <- read_tsv(paste0(dat, "/bisulfite/GSE39775/GSM1083880_placenta2_MethylC-seq_chrY",".BED.gz"), skip=1, col_names = F)
+  
+placenta2 <- rbind(x,placenta2)
+placenta2 <- rbind(y,placenta2)
+placenta2.gr <- placenta2 %>%
+  rename(X1="chr", X2 = "start", X3="end") %>%
+  GRanges()
+
+
+```
+
+```{r}
+ch = import.chain("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/bisulfite/liftover/hg18ToHg38.over.chain")
+ch
+
+placenta2.hg38 = liftOver(placenta2.gr, ch)
+placenta2.hg38 <- unlist(placenta2.hg38) 
+```
+
+```{r}
+library(tidyverse)
+placenta2.df <- as.data.frame(placenta2.hg38) %>%
+  dplyr::select(c(seqnames, start, X4)) %>%
+  rename(X4="methylated_frequencyPL") 
+ # filter(seqnames == "chr8")
+chm13.df <- as.data.frame(hg38_meth)%>%
+  dplyr::select(c(seqnames, start, "methylated_frequency")) 
+#  filter(seqnames == "chr8")
+  
+all.meth <- merge(placenta2.df, chm13.df, by=c("start", "seqnames"))
+
+
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+c <- cor(all.meth$methylated_frequencyPL, all.meth$methylated_frequency)
+title <- sprintf("N = %d r = %.3f", nrow(data), c)
+ggplot(all.meth, aes(methylated_frequencyPL, methylated_frequency)) +
+    geom_bin2d(bins=25) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("Bisulfite Methylation Frequency") +
+    ylab("Nanopolish Methylation Frequency") +
+    theme_bw(base_size=20) +
+    ggtitle(title)
+
+
+
+placenta2.df <- as.data.frame(placenta2.hg38) %>%
+  dplyr::select(c(seqnames, start, X4)) %>%
+  rename(X4="methylated_frequency") %>%
+  mutate(sample = "placenta")
+chm13.df <- as.data.frame(hg38_meth)%>%
+  dplyr::select(c(seqnames, start, "methylated_frequency")) %>%
+  mutate(sample="chm13")
+
+meth <- rbind(placenta2.df,chm13.df)
+
+ggplot(meth, aes(x=methylated_frequency, fill=sample))+geom_density(adjust = 5)+facet_wrap(~sample)
+```
+```{r}
+
+chrs <- c("chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10", "chr11", "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", "chr21", "chr22", "chrX", "chrY")
+
+library(BSgenome.Hsapiens.UCSC.hg38)
+blocks <- genomeBlocks(BSgenome.Hsapiens.UCSC.hg38, chrs = chrs, width = 20000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+  binnedMean <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewMeans(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+  
+all.meth.gr <- all.meth %>%
+  mutate(n=1) %>%
+  mutate(end=start+1) %>%
+  GRanges()
+
+
+  score1 <- coverage(all.meth.gr, weight="methylated_frequencyPL")
+  score2 <- coverage(all.meth.gr, weight="methylated_frequency")
+  score3 <- coverage(all.meth.gr, weight="n")
+  
+  
+  binned_PL <- binnedSum(blocks, numvar = score1, "methylated_frequencyPL") %>%
+    as.data.frame()
+  binned_chm <-binnedSum(blocks, numvar = score2, "methylated_frequency")%>%
+    as.data.frame()
+  binned_n <- binnedSum(blocks, numvar = score3, "n")%>%
+    as.data.frame()
+  
+meth_bins <- merge(binned_PL, binned_chm, by = c("start", "end", "seqnames", "width", "strand")) %>%
+  merge(binned_n, by = c("start", "end", "seqnames", "width", "strand")) %>%
+    group_by(start, end,seqnames) %>%
+    mutate(PLfreq = methylated_frequencyPL/n, CHfreq=methylated_frequency/n)
+```
+
+```{r}
+
+meth_binsnoNA <- meth_bins %>% 
+  ungroup() %>%
+  dplyr::select(c(PLfreq, CHfreq)) %>%
+  na.omit() %>%
+  filter_all(all_vars(!is.infinite(.)))
+
+
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+c <- cor(meth_binsnoNA$PLfreq, meth_binsnoNA$CHfreq)
+title <- sprintf("N = %d r = %.3f", nrow(meth_binsnoNA), c)
+ggplot(meth_binsnoNA, aes(PLfreq, CHfreq)) +
+    geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("Placenta") +
+    ylab("CHM13") +
+    theme_bw(base_size=20) +
+    ggtitle(title)
+
+
+fit1 <- lm(PLfreq ~ CHfreq, data = meth_binsnoNA)
+
+pal <- wes_palette("Zissou1", 21, type = "continuous")
+ggplot(meth_binsnoNA, aes(x = PLfreq, y = CHfreq))+stat_density_2d(aes(fill = ..level..), geom = "polygon")+stat_density_2d(aes(fill = ..level..), geom = "polygon", colour="black", size = .5, linetype = "dashed")+theme_classic()+ scale_fill_gradientn(colours = pal)+
+  labs(title = paste("Adj R2 = ",signif(summary(fit1)$adj.r.squared, 5),
+                     "Intercept =",signif(fit1$coef[[1]],5 ),
+                     " Slope =",signif(fit1$coef[[2]], 5),
+                     " P =",signif(summary(fit1)$coef[2,4], 5)))
+#+stat_smooth(method = "lm", col = "red")
+
+```
+
