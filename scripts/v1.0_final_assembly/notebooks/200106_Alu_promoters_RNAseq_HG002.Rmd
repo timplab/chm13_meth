@@ -1,0 +1,440 @@
+---
+title: "TE quartiles"
+author: "Ariel"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,  message=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(wesanderson)
+library(ggExtra)
+library(biovizBase)
+library(Repitools)
+library(Biostrings)
+library(ggplot2)
+library(BSgenome)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggridges)
+library(GenomicRanges)
+library(RColorBrewer)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+library(gridExtra) 
+library(pheatmap)
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+hg002_meth <- read_csv(paste0(dat, "/HG002/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_CpGmethylation_ByCall.csv")) %>%
+  ungroup() %>%
+  group_by(start) %>%
+  summarise(num_meth = sum(mcall == 1), num_unmeth = sum(mcall == 0)) %>%
+  mutate(chr = "chrX", start = start, end = start) %>%
+  GRanges()
+
+hg002_gc <- read_csv(paste0(dat, "/HG002/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_GpCmethylation_ByCall.csv")) %>%
+  ungroup() %>%
+  group_by(start) %>%
+  summarise(num_meth = sum(mcall == 1), num_unmeth = sum(mcall == 0)) %>%
+  mutate(chr = "chrX", start = start, end = start) %>%
+  GRanges()
+```
+
+```{r proseq, echo=F}
+r1 <- read_tsv(paste0(dat,"/TE/rm_v2.0/hg002_k51_chrX_single-mrg_meryl.over.HG002_RNAseq_SRR13086640_cutadapt-m100_bt2-N0-k100-HG002-chrX_COV_RM.bed"), col_names = c("seqnames", "start", "end","rep_type", "len", "direction", "rep_family", "rep_class", "ID"))
+
+rm <- r1 %>%
+  filter(rep_class == "Alu") %>%
+  mutate(name = ifelse(grepl("AluJb", rep_type), "AluJb", rep_family)) %>%
+  mutate(name = ifelse(grepl("AluSx", rep_type), "AluSx", name)) %>%
+  mutate(name = ifelse(grepl("AluY", rep_type), "AluY", name)) %>%
+  filter(name != "SINE")
+
+flankn <- 1000
+bodylen <- 1
+
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_gc, l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_gc[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(direction == "+",start - gene_start, gene_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+chm13.ovl.labs <- chm13.ovl %>%
+  mutate(freq = num_meth/(num_unmeth+num_meth)) %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+  group_by(dist) %>%
+  summarise(med_meth = median(freq)) %>%
+  mutate(mod = "CpG") %>%
+  distinct()
+
+p <- ggplot(chm13.ovl.labs,aes( x = dist, y = med_meth))+
+  geom_smooth(method = "loess", span = 0.1,se = F)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+coord_cartesian(ylim = c(.15,.25))
+p
+
+#ggsave(
+#  paste0(figs, "/","Alu_HG002_nucleosomes.pdf"),
+#  plot = p,
+#  scale = 1,
+#  width = 8,
+#  height = 4,
+#)
+```
+
+
+```{r}
+
+
+genes <- read_tsv(paste0(dat, "/HG002/annotations/HG002_v0.9.orf_only.bed"), col_names = c("chr", "start", "end", "name", "len","direction")) %>%
+  mutate(ID = row_number())%>%
+  mutate(gene_start = start, gene_end = end) %>%
+  GRanges()
+
+
+prom <- as.data.frame(genes) %>%
+  filter(seqnames == "chrX") %>%
+  mutate(gene_start = start, gene_end = end, end = start, start = start-1000) %>%
+  mutate(ID = row_number()) %>%
+  GRanges()
+  
+
+keepi <- findOverlaps(hg002_gc.gr,prom)
+freq.matched <- hg002_gc.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(prom[subjectHits(keepi)]))
+
+reps.gc <- as.data.frame(freq.matched) %>%
+  rename(methylated_frequency="methylated_frequencyGC") %>%
+  select(ID, methylated_frequencyGC) %>%
+  group_by(ID) %>%
+  summarise(medGC = mean(methylated_frequencyGC))
+  
+
+keepi <- findOverlaps(hg002_meth.gr,prom)
+freq.matched <- hg002_meth.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(prom[subjectHits(keepi)]))
+
+reps.cg <- as.data.frame(freq.matched) %>%
+  rename(methylated_frequency="methylated_frequencyCG") %>%
+  group_by(ID) %>%
+  mutate(medCG = mean(methylated_frequencyCG)) %>%
+  distinct()
+
+reps.alu <- merge(reps.gc, reps.cg, by = "ID")
+  
+fit1 <- lm(medGC ~ medCG, data = reps.alu)
+pal <- wes_palette("Zissou1", 21, type = "continuous")
+ggplot(reps.alu, aes(x = medGC, y = medCG))+stat_density_2d(aes(fill = ..level..), geom = "polygon")+stat_density_2d(aes(fill = ..level..), geom = "polygon", colour="black", size = .5, linetype = "dashed")+theme_classic()+ scale_fill_gradientn(colours = pal)+stat_smooth(method = "lm", col = "red")+
+  labs(title = paste("Adj R2 = ",signif(summary(fit1)$adj.r.squared, 5),
+                     "Intercept =",signif(fit1$coef[[1]],5 ),
+                     " Slope =",signif(fit1$coef[[2]], 5),
+                     " P =",signif(summary(fit1)$coef[2,4], 5)))
+
+
+mat <- reps.alu %>%
+  select(medGC, medCG, ID) %>%
+  as.matrix()
+  
+
+d <- dist(scale(mat), method="euclidean", diag=TRUE, upper=TRUE)
+hls <- hclust(d, method="complete")
+
+# Create groups
+cluster <- cutree(hls, 2)
+
+# Create scatter plot
+ggData <- as.data.frame(cbind(mat, cluster)) %>% distinct()
+ggData$cluster <- as.factor(ggData$cluster)
+print(ggData)
+ggplot(ggData, aes(x=medGC, y=medCG, color=cluster)) + geom_point(size=2, alpha=.5)
+
+
+```
+
+```{r}
+genes.clust <- merge(as.data.frame(prom), ggData, by = "ID") %>%
+  rename(direction = "gene_direction") %>%
+  distinct() %>%
+  GRanges()
+rm.gr <- rm %>%
+  mutate(ID = row_number()) %>%
+  rename(direction = "alu_direction") %>%
+  GRanges()
+
+# find alus in open promoters vs alus in closed promoters
+
+keepi <- findOverlaps(rm.gr,genes.clust)
+freq.matched <- rm.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(genes.clust[subjectHits(keepi)]))
+
+prom.alus <- as.data.frame(freq.matched) %>%
+  select(-c(medGC, medCG, ID, ID.1, len.1)) %>%
+  rename(name.1 = "gene_name")
+
+
+
+flankn <- 1000
+bodylen <- 1
+
+l1_regions <- prom.alus %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_gc, l1_regions)
+genes.ovl <- as.data.frame(prom.alus)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(alu_start = start, alu_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_gc[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(alu_direction == "+",start - alu_start, alu_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+chm13.ovl.labs <- chm13.ovl %>%
+  mutate(freq = num_meth/(num_unmeth+num_meth)) %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+  group_by(dist, cluster) %>%
+  summarise(med_meth = median(freq)) %>%
+  mutate(mod = "CpG") %>%
+  distinct()
+
+p <- ggplot(chm13.ovl.labs,aes( x = dist, y = med_meth, color = as.factor(cluster)))+
+  geom_smooth(method = "loess", span = 0.15,se = F)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+geom_point(alpha=.1)
+p
+
+```
+
+```{r}
+
+rm.gr <- rm %>%
+  mutate(ID = row_number()) %>%
+  mutate( alu_start = start, alu_end = end) %>%
+  rename(direction = "alu_direction") %>%
+  GRanges()
+
+keepi <- findOverlaps(hg002_gc.gr,rm.gr)
+
+freq.matched <- hg002_gc.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(rm.gr[subjectHits(keepi)]))
+
+reps.gc <- as.data.frame(freq.matched) %>%
+  rename(methylated_frequency="methylated_frequencyGC") %>%
+  select(ID, methylated_frequencyGC) %>%
+  group_by(ID) %>%
+  summarise(medGC = mean(methylated_frequencyGC))
+  
+
+keepi <- findOverlaps(hg002_meth.gr,rm.gr)
+freq.matched <- hg002_meth.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(rm.gr[subjectHits(keepi)]))
+
+reps.cg <- as.data.frame(freq.matched) %>%
+  rename(methylated_frequency="methylated_frequencyCG") %>%
+  group_by(ID) %>%
+  mutate(medCG = mean(methylated_frequencyCG)) %>%
+  group_by(rep_type) %>%
+  mutate(CGquartile = ntile(medCG,4)) %>%
+  distinct()
+
+reps.alu <- merge(reps.gc, reps.cg, by = "ID")
+  
+
+
+```
+
+
+```{r}
+flankn <- 10000
+bodylen <- 1
+
+genes.regions <- as.data.frame(genes) %>%
+  mutate(gene_start = start, gene_end = end) %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+rm.gr <- rm %>%
+  mutate(ID = row_number()) %>%
+  GRanges()
+
+keepi <- findOverlaps(rm.gr,genes.regions)
+
+freq.matched <- rm.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(genes.regions[subjectHits(keepi)]))
+
+alu.genes <- as.data.frame(freq.matched)
+
+rm.genes <- rm %>%
+  mutate(ID = row_number()) %>%
+  mutate(gene=case_when(ID %in% unique(alu.genes$ID) ~ "gene", 
+                        TRUE ~ "intergenic")) 
+
+
+
+
+flankn <- 1000
+bodylen <- 1
+
+l1_regions <- rm.genes %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_meth, l1_regions)
+genes.ovl <- as.data.frame(rm.genes)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(alu_start = start, alu_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_meth[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(direction == "+",start - alu_start, alu_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+chm13.ovl.labs <- chm13.ovl %>%
+  mutate(freq = num_meth/(num_unmeth+num_meth)) %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+  group_by(dist, gene, name) %>%
+  summarise(med_meth = median(freq)) %>%
+  mutate(mod = "CpG") %>%
+  distinct()
+
+p <- ggplot(chm13.ovl.labs,aes( x = dist, y = med_meth, color = as.factor(gene)))+
+  geom_smooth(method = "loess", span = 0.12,se = F)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+facet_wrap(~name)+ylim(0,1)
+p
+
+
+ggsave(filename = paste0(figs, "/HG002_aluCpGmethylation_10kbgene.pdf"), plot = p,
+ height = 8, width = 12)
+
+```
+
+```{r}
+
+flankn <- 1000
+bodylen <- 1
+
+l1_regions <- rm.genes %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_gc, l1_regions)
+genes.ovl <- as.data.frame(rm.genes)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(alu_start = start, alu_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_gc[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(direction == "+",start - alu_start, alu_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+chm13.ovl.labs <- chm13.ovl %>%
+  mutate(freq = num_meth/(num_unmeth+num_meth)) %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+  group_by(dist, gene) %>%
+  summarise(med_meth = median(freq)) %>%
+  mutate(mod = "CpG") %>%
+  distinct()
+
+p <- ggplot(chm13.ovl.labs,aes( x = dist, y = med_meth, color = as.factor(gene)))+
+  geom_smooth(method = "loess", span = 0.11,se = F)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+coord_cartesian(ylim = c(.15,.3))
+p
+
+ggsave(filename = paste0(figs, "/HG002_aluNucleosomes_10kbgene.pdf"), plot = p,
+ height = 8, width = 10)
+```
+

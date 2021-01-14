@@ -1,0 +1,80 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(mclust)
+```
+
+```{r mbed}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/allele_specific_meth/xist"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+```
+
+```{r}
+hg002.rep <- read_tsv(paste0(dat, "/TE/rm_v2.0/hg002_k51_chrX_single-mrg_meryl.over.HG002_RNAseq_SRR13086640_cutadapt-m100_bt2-N0-k100-HG002-chrX_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) 
+region_start=70380382-10000
+region_end= 70412484+50000
+reg = cgcalls %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end)
+  
+
+cpg_runs <-getRuns(reg, maxGap = 300)
+ 
+
+cpg_runs.ordered <- order_reads(cpg_runs)
+  
+ cpg_runs <- cpg_runs.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+#ids <- order(sapply(seq_along(gcruns.list),function(i){length(unique(gcruns.list$qname))}))
+
+
+bis <- reg %>% 
+  group_by(chrom, start) %>%
+  summarise(meth_freq = mean(mcall), cov = n()) 
+
+meth <- ggplot(bis, aes(x = (start/1e6), y= meth_freq))+geom_smooth(size =1, se = F, method = "loess", span = .1)+ylim(0,1)+ theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.y=element_blank(), axis.title.x=element_blank(), panel.spacing = unit(2, "lines"))#+coord_cartesian(xlim=(c(37595000,37600000)))
+
+bis <- hg002.rep %>%
+  filter(start > region_start) %>%
+  filter(end < region_end)
+
+L1 <- ggplot(bis, aes(xmin = start, xmax = end, ymin=0, ymax=.1,fill = rep_fam))+geom_rect()+ theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+theme(legend.position = "bottom")
+
+
+g <- ggplot(cpg_runs,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
+    geom_rect(aes(fill = m))  +
+#    geom_vline(xintercept = 127638255, linetype == "dashed") +
+    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(),  legend.position= "bottom",axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+geom_vline(xintercept = c(70380382,70412484), linetype = "dotted")
+
+top_row <- plot_grid(g, L1,align="v", ncol=1,rel_heights = c(1/2, 1/4))
+top_row
+
+ggsave(
+  paste0(figs, "/","XistHG002_phased_readlevel.pdf"),
+  plot = top_row,
+  scale = 1,
+  width = 10,
+  height = 10,
+)
+```

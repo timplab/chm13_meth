@@ -1,0 +1,387 @@
+---
+title: "TE quartiles"
+author: "Ariel"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r include=FALSE}
+#This rmarkdown takes RNA-seq coverage files for HG002 chromosome X and chm13 chromosome X merges with methylation calls and generates merged files for average methylation and per base methylation 
+
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,  message=FALSE)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+library(BSgenome)
+options(scipen=999)
+library(ggridges)
+library(GenomicRanges)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+chm13_meth <- read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb_split.tsv")) %>%
+  GRanges()
+
+hg002_meth <- read_csv(paste0(dat, "/HG002/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_CpGmethylation_ByCall.csv")) %>%
+  ungroup() %>%
+  group_by(start) %>%
+  summarise(num_meth = sum(mcall == 1), num_unmeth = sum(mcall == 0)) %>%
+  mutate(start = start, end = start,chr = "chrX") %>%
+  GRanges()
+
+hg002_gc <- read_csv(paste0(dat, "/HG002/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_GpCmethylation_ByCall.csv")) %>%
+  ungroup() %>%
+  group_by(start) %>%
+  summarise(num_meth = sum(mcall == 1), num_unmeth = sum(mcall == 0)) %>%
+  mutate(start = start, end = start,chr = "chrX") %>%
+  GRanges()
+
+r1 <- read_tsv(paste0(dat, "/TE/rm_v2.0/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_2_S183_RNAseq_cutadapt-m100_bt2-N0-k100_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) 
+
+r2 <- read_tsv(paste0(dat, "/TE/rm_v2.0/hg002_k51_chrX_single-mrg_meryl.over.HG002_RNAseq_SRR13086640_cutadapt-m100_bt2-N0-k100-HG002-chrX_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) 
+
+r3 <- read_tsv(paste0(dat, "/TE/rm_v2.0/chrX-PARremoved_chm13_k51_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k100_chm13-20200922_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) 
+```
+
+```{r chm13_alu, echo=F}
+
+rm <- r1 %>%
+  filter(rep_fam == "SINE/Alu") %>%
+  mutate(ID = row_number()) %>%
+  group_by(rep_type) %>%
+  mutate(quartile = ntile(cov,4)) %>%
+  ungroup()
+
+flankn <- 500
+bodylen <- 1
+
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(chm13_meth, l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(rep_start = start, rep_end = end) 
+
+chm13.ovl <- as.data.frame(chm13_meth[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(comp == "+",start - rep_start, rep_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+
+write.table(chm13.ovl, file = paste0(dat, "/TE/rm_v2.0/add_meth/chm13_Alu_CpG_perbase.tsv"), quote = F, sep = "\t", row.names = F,col.names = T)
+
+
+```
+
+```{r chm13_L1, echo=F}
+
+rm <- r1 %>%
+  filter(rep_fam == "LINE/L1") %>%
+  mutate(ID = row_number()) %>%
+  group_by(rep_type) %>%
+  mutate(quartile = ntile(cov,4)) %>%
+  ungroup()
+
+flankn <- 1000
+bodylen <- 2
+
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(chm13_meth, l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(rep_start = start, rep_end = end) 
+
+chm13.ovl <- as.data.frame(chm13_meth[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(comp == "+",start - rep_start, rep_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+
+write.table(chm13.ovl, file = paste0(dat, "/TE/rm_v2.0/add_meth/chm13_L1_CpG_perbase.tsv"), quote = F, sep = "\t", row.names = F,col.names = T)
+
+
+```
+
+
+
+
+```{r chm13_alu, echo=F}
+
+rm <- r2 %>%
+  filter(rep_fam == "SINE/Alu") %>%
+  mutate(ID = row_number()) %>%
+  group_by(rep_type) %>%
+  mutate(quartile = ntile(cov,4)) %>%
+  ungroup()
+
+flankn <- 500
+bodylen <- 1
+
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_meth, l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(rep_start = start, rep_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_meth[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(comp == "+",start - rep_start, rep_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+
+write.table(chm13.ovl, file = paste0(dat, "/TE/rm_v2.0/add_meth/HG002_Alu_CpG_perbase.tsv"), quote = F, sep = "\t", row.names = F,col.names = T)
+
+
+```
+
+```{r chm13_L1, echo=F}
+
+rm <- r2 %>%
+  filter(rep_fam == "LINE/L1") %>%
+  mutate(ID = row_number()) %>%
+  group_by(rep_type) %>%
+  mutate(quartile = ntile(cov,4)) %>%
+  ungroup()
+
+flankn <- 1000
+bodylen <- 2
+
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_meth, l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(rep_start = start, rep_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_meth[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(comp == "+",start - rep_start, rep_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+
+write.table(chm13.ovl, file = paste0(dat, "/TE/rm_v2.0/add_meth/hg002_L1_CpG_perbase.tsv"), quote = F, sep = "\t", row.names = F,col.names = T)
+
+
+```
+
+```{r chm13_alu, echo=F}
+
+rm <- r2 %>%
+  filter(rep_fam == "SINE/Alu") %>%
+  mutate(ID = row_number()) %>%
+  group_by(rep_type) %>%
+  mutate(quartile = ntile(cov,4)) %>%
+  ungroup()
+
+flankn <- 1000
+bodylen <- 1
+
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_gc, l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(rep_start = start, rep_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_gc[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(comp == "+",start - rep_start, rep_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+
+write.table(chm13.ovl, file = paste0(dat, "/TE/rm_v2.0/add_meth/HG002_Alu_GpC_perbase.tsv"), quote = F, sep = "\t", row.names = F,col.names = T)
+
+
+```
+
+```{r chm13_L1, echo=F}
+
+rm <- r2 %>%
+  filter(rep_fam == "LINE/L1") %>%
+  mutate(ID = row_number()) %>%
+  group_by(rep_type) %>%
+  mutate(quartile = ntile(cov,4)) %>%
+  ungroup()
+
+flankn <- 1000
+bodylen <- 2
+
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_gc, l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(rep_start = start, rep_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_gc[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(comp == "+",start - rep_start, rep_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+
+write.table(chm13.ovl, file = paste0(dat, "/TE/rm_v2.0/add_meth/hg002_L1_GpC_perbase.tsv"), quote = F, sep = "\t", row.names = F,col.names = T)
+
+
+```
+
+```{r}
+r1.gr <- r1 %>%
+  mutate(ID = row_number()) %>% 
+  mutate(rep_start = start, rep_end = end) %>%
+  GRanges()
+
+keepi <- findOverlaps(chm13_meth,r1.gr)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(r1.gr[subjectHits(keepi)]))
+
+reps.cg <- as.data.frame(freq.matched) %>%
+  rename(methylated_frequency="methylated_frequencyCG") %>%
+  group_by(ID) %>%
+  mutate(medCG = mean(methylated_frequencyCG), num_CG = sum(num_motifs_in_group)) %>%
+  distinct() %>%
+  select(-c(start, end, called_sites,group_sequence,called_sites_methylated, num_motifs_in_group, width,methylated_frequencyCG, strand)) %>%
+  distinct() %>%
+  relocate(rep_start, .after = seqnames) %>%
+  relocate(rep_end, .after = rep_start)
+
+write.table(reps.cg, file = paste0(dat, "/TE/rm_v2.0/add_meth/chm13_chrX_RM_COV_CpC.tsv"), quote = F, sep = "\t", row.names = F,col.names = T)
+```
+
+
+```{r}
+r2.gr <- r2 %>%
+  mutate(ID = row_number()) %>% 
+  mutate(rep_start = start, rep_end = end) %>%
+  GRanges()
+
+keepi <- findOverlaps(hg002_meth,r2.gr)
+freq.matched <- hg002_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(r2.gr[subjectHits(keepi)]))
+
+reps.cg <- as.data.frame(freq.matched)  %>%
+  mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  rename(methylated_frequency="methylated_frequencyCG") %>%
+  group_by(ID) %>%
+  mutate(medCG = mean(methylated_frequencyCG), num_CG = n()) %>%
+  distinct() %>%
+  select(-c(start, end, width, strand, num_meth, num_unmeth,methylated_frequencyCG)) %>%
+  relocate(rep_start, .after = seqnames) %>%
+  relocate(rep_end, .after = rep_start) %>%
+  distinct()
+
+keepi <- findOverlaps(hg002_gc,r2.gr)
+freq.matched <- hg002_gc[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(r2.gr[subjectHits(keepi)]))
+
+reps.gc <- as.data.frame(freq.matched) %>%
+  mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  rename(methylated_frequency="methylated_frequencyCG") %>%
+  group_by(ID) %>%
+  mutate(medGC = mean(methylated_frequencyCG), num_GC = n()) %>%
+  distinct() %>%
+  select(-c(start, end, width, strand, num_meth, num_unmeth,methylated_frequencyCG)) %>%
+  relocate(rep_start, .after = seqnames) %>%
+  relocate(rep_end, .after = rep_start) %>%
+  distinct() %>%
+  select(c(ID, medGC, num_GC))
+
+reps <- merge(reps.cg, reps.gc, by = "ID")
+write.table(reps, file = paste0(dat, "/TE/rm_v2.0/add_meth/hg002_chrX_RM_COV_CpCGPC.tsv"), quote = F, sep = "\t", row.names = F,col.names = T)
+```
+
+```{r}
+r1.gr <- r3 %>%
+  mutate(ID = row_number()) %>% 
+  mutate(rep_start = start, rep_end = end) %>%
+  GRanges()
+
+keepi <- findOverlaps(chm13_meth,r1.gr)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(r1.gr[subjectHits(keepi)]))
+
+reps.cg <- as.data.frame(freq.matched) %>%
+  rename(methylated_frequency="methylated_frequencyCG") %>%
+  group_by(ID) %>%
+  mutate(medCG = mean(methylated_frequencyCG), num_CG = sum(num_motifs_in_group)) %>%
+  distinct() %>%
+  select(-c(start, end, called_sites,group_sequence,called_sites_methylated, num_motifs_in_group, width,methylated_frequencyCG, strand)) %>%
+  distinct() %>%
+  relocate(rep_start, .after = seqnames) %>%
+  relocate(rep_end, .after = rep_start)
+
+write.table(reps.cg, file = paste0(dat, "/TE/rm_v2.0/add_meth/chm13_chrXfromWG_RM_COV_CpC.tsv"), quote = F, sep = "\t", row.names = F,col.names = T)
+```

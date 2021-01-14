@@ -1,0 +1,436 @@
+---
+title: "TE quartiles"
+author: "Ariel"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r include=FALSE}
+#This rmarkdown takes RNA-seq coverage files for HG002 chromosome X and chm13 chromosome X merges with methylation calls and generates merged files for average methylation and per base methylation 
+
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,  message=FALSE)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+library(BSgenome)
+options(scipen=999)
+library(ggridges)
+library(GenomicRanges)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+chm13.rep <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/chm13_chrX_RM_COV_CpC.tsv"))
+hg002.rep <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/hg002_chrX_RM_COV_CpCGPC.tsv"))
+```
+
+```{r}
+chm13.alu <- chm13.rep %>%
+  filter(rep_fam == "SINE/Alu") %>%
+  mutate(cov = as.numeric(cov)) %>%
+mutate(quartile = as.factor(ntile(cov, 5)))
+
+
+ggplot(chm13.alu, aes(x=medCG, y =quartile, fill=quartile))+geom_density_ridges()
+ggplot(chm13.alu, aes(y=medCG, x =as.factor(quartile), fill=as.factor(quartile)))+geom_violin() +geom_boxplot(width=0.1)+
+  theme_classic()
+
+
+hg002.alu <- hg002.rep %>%
+  filter(rep_fam == "SINE/Alu") %>%
+  mutate(cov = as.numeric(cov)) %>%
+mutate(quartile = as.factor(ntile(cov, 5)))
+
+
+ggplot(hg002.alu, aes(x=medCG, y =quartile, fill=quartile))+geom_density_ridges()
+ggplot(hg002.alu, aes(y=medCG, x =as.factor(quartile), fill=as.factor(quartile)))+geom_violin() +geom_boxplot(width=0.1)+
+  theme_classic()
+```
+
+```{r}
+chm13.L1 <- chm13.rep %>%
+  filter(rep_fam == "LINE/L1") %>%
+  mutate(cov = as.numeric(cov)) %>%
+mutate(quartile = as.factor(ntile(cov, 5)))
+
+
+ggplot(chm13.L1, aes(x=medCG, y =quartile, fill=quartile))+geom_density_ridges()
+ggplot(chm13.L1, aes(y=medCG, x =as.factor(quartile), fill=as.factor(quartile)))+geom_violin() +geom_boxplot(width=0.1)+
+  theme_classic()
+
+
+hg002.L1 <- hg002.rep %>%
+  filter(rep_fam == "LINE/L1") %>%
+  mutate(cov = as.numeric(cov)) %>%
+mutate(quartile = as.factor(ntile(cov, 5)))
+
+
+ggplot(hg002.L1, aes(x=medCG, y =quartile, fill=quartile))+geom_density_ridges()
+ggplot(hg002.L1, aes(y=medCG, x =as.factor(quartile), fill=as.factor(quartile)))+geom_violin() +geom_boxplot(width=0.1)+
+  theme_classic()
+```
+
+```{r}
+# Question -- hg002 - alus make up a bulk of reads - is it equal from all active alus or are some alus producing a larger fraction
+hg002.alu.on <- hg002.alu %>%
+  filter(cov >0) %>%
+mutate(quartile = as.factor(ntile(cov, 10))) %>%
+  mutate(count = sum(cov)) %>%
+  group_by(quartile) %>%
+  summarise(total = sum(cov)/count, min=min(cov), max=max(cov)) %>%
+  distinct()
+
+hg002.alu.on
+```
+```{r}
+hg002.alu.high <- hg002.alu %>%
+  mutate(group = case_when(cov >= 2997 ~ "high", 
+                           TRUE ~ "other")) %>%
+  mutate(total = n()) %>%
+  group_by(group) %>%
+  summarise(number = n()/total) %>%
+    distinct()
+# in HG002 8.4% of the Alus make up 48.8% of the transcripts
+```
+
+
+```{r}
+perbase <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/HG002_Alu_CpG_perbase.tsv")) %>%
+  mutate(name = ifelse(grepl("AluJb", rep_type), "AluJb", rep_fam)) %>%
+  mutate(name = ifelse(grepl("AluSx", rep_type), "AluSx", name)) %>%
+  mutate(name = ifelse(grepl("AluY", rep_type), "AluY", name)) %>%
+  filter(name != "SINE/Alu")%>%
+  mutate(status=case_when(cov == 0 ~ "untranscribed", 
+                          TRUE ~ "transcribed")) %>%
+  group_by(status, name) %>%
+mutate(quartile = as.factor(ntile(cov, 4))) %>%
+  mutate(quartile=ifelse(status == "untranscribed", 0, quartile))
+
+
+bodylen=1
+flankn=500
+
+chm13.ovl.labs <- perbase %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+  group_by(dist, status, name) %>%
+  mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  summarise(med_meth = median(methylated_frequency)) %>%
+  distinct()
+
+p <- ggplot(chm13.ovl.labs,aes( x = dist, y = med_meth, color = as.factor(status)))+
+  geom_smooth(method = "loess", span = 0.2,se = F)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) 
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+coord_cartesian(ylim = c(.5,1))+facet_wrap(~name)
+p
+
+```
+```{r}
+# active Alus (cov >0) that are at least 200bp
+
+perbase <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/HG002_Alu_GpC_perbase.tsv")) %>%
+  mutate(name = ifelse(grepl("AluJb", rep_type), "AluJb", rep_fam)) %>%
+  mutate(name = ifelse(grepl("AluSx", rep_type), "AluSx", name)) %>%
+  mutate(name = ifelse(grepl("AluY", rep_type), "AluY", name)) %>%
+ # filter(genewidth > 200) %>%
+  filter(name != "SINE/Alu")%>%
+  mutate(status=case_when(cov == 0 ~ "untranscribed", 
+                          TRUE ~ "transcribed")) %>%
+  group_by(status) %>%
+#mutate(quartile = as.factor(ntile(cov, 4))) %>%
+#  mutate(quartile=ifelse(status == "untranscribed", 0, quartile)) %>%
+  mutate(cut=rollmean(dist, 50, NA))
+
+bodylen=1
+flankn=1000
+
+
+n_windows=500
+perbase$cut = cut(perbase$dist, breaks=n_windows)
+
+chm13.ovl.labs <- perbase %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+ # filter(quartile != 0) %>%
+  group_by(status,cut) %>%
+  mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  summarise(med = median(methylated_frequency), top = quantile(methylated_frequency, 0.75), bot = quantile(methylated_frequency, 0.25), n_genes = length(methylated_frequency)) %>%
+  mutate(x_tmp = str_sub(cut, 2, -2)) %>% 
+  separate(x_tmp, c("min", "max"), sep = ",") %>% 
+  mutate_at(c("min", "max"), as.double) %>%
+  ungroup() %>%
+  group_by(status) %>%
+  arrange(min) %>%
+  mutate(med_smooth = rollmean(med, 20, NA))
+
+p <- ggplot(chm13.ovl.labs,aes( x = min, y = med_smooth, color=status), alpha=.5)+
+#  geom_smooth(method = "loess", span = 0.12,se = F)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+ # geom_ribbon(aes(ymin=bot, ymax=top), alpha=0.2, size=0)+
+  geom_line(aes(y=med_smooth), alpha=.5, size=1) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+coord_cartesian(ylim = c(.15,.25))+
+  geom_text(data = perbase %>% 
+              ungroup() %>%
+              select(quartile,ID,status,name) %>%
+              distinct() %>%
+              group_by(status) %>%
+              summarise(n_genes=n()) %>%
+              distinct() %>%
+              mutate(height=case_when(status == "untranscribed" ~ 0, 
+                          status == "transcribed" ~ .01)),
+            aes(x=c(2),
+                y=.2+height,
+                label=paste("# repeats =",comma(n_genes))
+                ), hjust=1)
+p
+
+ggsave(filename = paste0(figs, "/HG002_aluNucleosomes_10kbgene_binSmooth.pdf"), plot = p,
+ height = 8, width = 10)
+
+```
+
+```{r}
+# active Alus (cov >0) that are at least 200bp
+
+perbase <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/hg002_L1_GpC_perbase.tsv")) %>%
+#  mutate(name = ifelse(grepl("AluJb", rep_type), "AluJb", rep_fam)) %>%
+#  mutate(name = ifelse(grepl("AluSx", rep_type), "AluSx", name)) %>%
+#  mutate(name = ifelse(grepl("AluY", rep_type), "AluY", name)) %>%
+#  filter(genewidth > 200) %>%
+ # filter(name != "SINE/Alu")%>%
+  mutate(status=case_when(cov == 0 ~ "untranscribed", 
+                          TRUE ~ "transcribed")) %>%
+  group_by(status) %>%
+mutate(quartile = as.factor(ntile(cov, 4))) %>%
+  mutate(quartile=ifelse(status == "untranscribed", 0, quartile)) %>%
+  mutate(cut=rollmean(dist, 50, NA))
+
+bodylen=2
+flankn=1000
+
+
+n_windows=500
+perbase$cut = cut(perbase$dist, breaks=n_windows)
+
+n_windows=500
+perbase$cut = cut(perbase$dist, breaks=n_windows)
+
+chm13.ovl.labs <- perbase %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+ # filter(quartile != 0) %>%
+  group_by(status,cut) %>%
+  mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  summarise(med = median(methylated_frequency), top = quantile(methylated_frequency, 0.75), bot = quantile(methylated_frequency, 0.25), n_genes = length(methylated_frequency)) %>%
+  mutate(x_tmp = str_sub(cut, 2, -2)) %>% 
+  separate(x_tmp, c("min", "max"), sep = ",") %>% 
+  mutate_at(c("min", "max"), as.double) %>%
+  ungroup() %>%
+  group_by(status) %>%
+  arrange(min) %>%
+  mutate(med_smooth = rollmean(med, 20, NA))
+
+p <- ggplot(chm13.ovl.labs,aes( x = min, y = med_smooth, color=status), alpha=.5)+
+#  geom_smooth(method = "loess", span = 0.12,se = F)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+ # geom_ribbon(aes(ymin=bot, ymax=top), alpha=0.2, size=0)+
+  geom_line(aes(y=med_smooth), alpha=.5, size=1) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen) +
+  scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1),
+    labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+coord_cartesian(ylim = c(.15,.25))+
+geom_text(data = perbase %>% 
+              ungroup() %>%
+              select(quartile,ID,status) %>%
+              distinct() %>%
+              group_by(status) %>%
+              summarise(n_genes=n()) %>%
+              distinct() %>%
+              mutate(height=case_when(status == "untranscribed" ~ 0, 
+                          status == "transcribed" ~ .01)),
+            aes(x=c(2),
+                y=.2+height,
+                label=paste("# repeats =",comma(n_genes))
+                ), hjust=1)
+p
+
+ggsave(filename = paste0(figs, "/HG002_L1Nucleosomes_10kbgene_binSmooth.pdf"), plot = p,
+ height = 8, width = 10)
+
+
+```
+```{r}
+hg002.reps <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/hg002_chrX_RM_COV_CpCGPC.tsv")) %>%
+  mutate(asm="hg002")  %>%
+ separate(rep_fam, c("group","fam"), sep="/") %>%
+  filter(group != "DNA?") %>%
+  filter(group != "Unspecified")
+
+ggplot(hg002.reps, aes(y=medGC, x=reorder(group, medGC, FUN = median), fill=group))+geom_boxplot(outlier.shape = NA)+theme_classic()+coord_cartesian(ylim=c(0,.5))
+
+chm13.reps <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/chm13_chrX_RM_COV_CpC.tsv")) %>%
+  mutate(asm="chm13")%>%
+ separate(rep_fam, c("group","fam"), sep="/") %>%
+  filter(group != "DNA?") %>%
+  filter(group != "Unspecified")
+
+chm13WG.reps <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/chm13_chrXfromWG_RM_COV_CpC.tsv")) %>%
+  mutate(asm="chm13")%>%
+ separate(rep_fam, c("group","fam"), sep="/") %>%
+  filter(group != "DNA?") %>%
+  filter(group != "Unspecified")
+
+
+ggplot(reps.all, aes(medCG, fill=asm, alpha=.5))+geom_boxplot(outlier.shape = NA)+facet_wrap(~group)+theme_classic()
+
+```
+```{r}
+hg002.reps.sum <- hg002.reps %>%
+  mutate(total_all = sum(cov))%>%
+  group_by(group) %>%
+  summarise(total_num = n(), total_cov=sum(cov),total_all=total_all) %>%
+  mutate(ratio=total_cov/total_num) %>%
+  mutate(asm = "hg002") %>%
+  distinct()
+  
+chm13.reps.sum <- chm13.reps %>%
+  mutate(total_all = sum(cov))%>%
+  group_by(group) %>%
+  summarise(total_num = n(), total_cov=sum(cov), total_all=total_all) %>%
+  mutate(ratio=total_cov/total_num) %>%
+  mutate(asm="chm13") %>%
+  distinct()
+
+reps.sum <- rbind(hg002.reps.sum,chm13.reps.sum) %>%
+  group_by(asm) %>%
+  mutate(totalCov=sum(ratio)) %>%
+  group_by(asm, group) %>%
+  summarize(fraction_total=ratio/totalCov)
+
+ggplot(reps.sum, aes(y=fraction_total, fill=group, x=asm))+geom_bar(stat="identity")+theme_classic() 
+ggplot(reps.sum, aes(y=fraction_total, fill=asm, x=group))+geom_bar(stat="identity", position="dodge")+theme_classic()
+ggplot(reps.sum, aes(y=fraction_total, fill=asm, x=group))+geom_bar(stat="identity", position="dodge")+theme_classic()+coord_cartesian(ylim=c(0,.05))
+```
+```{r}
+hg002.reps.alu <- hg002.reps %>%
+  filter(fam == "Alu") %>%
+  mutate(name = ifelse(grepl("AluJb", rep_type), "AluJb", rep_type)) %>%
+  mutate(name = ifelse(grepl("AluSx", rep_type), "AluSx", name)) %>%
+  mutate(name = ifelse(grepl("AluY", rep_type), "AluY", name)) %>%
+  select(-c(medGC, num_GC)) %>%
+  mutate(status=case_when(cov == 0 ~ "untranscribed", 
+                          TRUE ~ "transcribed")) %>%
+  filter(name %in% c("AluJb", "AluSx", "AluY")) %>%
+  mutate(asm = "hg002")
+
+chm13.reps.alu <- chm13.reps %>%
+  filter(fam == "Alu") %>%
+  mutate(name  =  rep_type) %>%
+  mutate(status=case_when(cov == 0 ~ "untranscribed", 
+                          TRUE ~ "transcribed")) %>%
+    mutate(asm="chm13")
+
+
+chm13WG.reps.alu <- chm13WG.reps %>%
+  filter(fam == "Alu") %>%
+  mutate(name  =  rep_type) %>%
+  mutate(status=case_when(cov == 0 ~ "untranscribed", 
+                          TRUE ~ "transcribed")) %>%
+    mutate(asm="chm13WG")
+
+
+all_reps.alu <- rbind(hg002.reps.alu,chm13.reps.alu,chm13WG.reps.alu) 
+  
+dodge <- position_dodge(width = 1)
+ggplot(all_reps.alu, aes(y=perc_sub, x=asm, fill = status))+geom_violin(position=dodge)+geom_boxplot(width=0.2, color="grey", alpha=0.2, outlier.shape = NA, position=dodge)
+
+ggplot(all_reps.alu, aes(y=medCG, x=asm, fill = status))+geom_violin(position=dodge)+geom_boxplot(width=0.2, color="grey", alpha=0.2, outlier.shape = NA, position=dodge)
+```
+```{r}
+hg002.reps.l1 <- hg002.reps %>%
+  filter(fam == "L1") %>%
+  mutate(name  =  rep_type) %>%
+  select(-c(medGC, num_GC)) %>%
+  mutate(status=case_when(cov == 0 ~ "untranscribed", 
+                          TRUE ~ "transcribed")) %>%
+  mutate(asm = "hg002")
+
+chm13.reps.l1 <- chm13.reps %>%
+  filter(fam == "L1") %>%
+  mutate(name  =  rep_type) %>%
+  mutate(status=case_when(cov == 0 ~ "untranscribed", 
+                          TRUE ~ "transcribed")) %>%
+    mutate(asm="chm13")
+
+
+
+chm13WG.reps.l1 <- chm13WG.reps %>%
+  filter(fam == "L1") %>%
+  mutate(name  =  rep_type) %>%
+  mutate(status=case_when(cov == 0 ~ "untranscribed", 
+                          TRUE ~ "transcribed")) %>%
+    mutate(asm="chm13WG")
+
+
+all_reps.l1 <- rbind(hg002.reps.l1,chm13.reps.l1,chm13WG.reps.l1) 
+
+dodge <- position_dodge(width = 1)
+ggplot(all_reps.l1, aes(y=perc_sub, x=asm, fill = status))+geom_violin(position=dodge)+geom_boxplot(width=0.2, color="grey", alpha=0.2, outlier.shape = NA, position=dodge)
+
+ggplot(all_reps.l1, aes(y=medCG, x=asm, fill = status))+geom_violin(position=dodge)+geom_boxplot(width=0.2, color="grey", alpha=0.2, outlier.shape = NA, position=dodge)
+```
+```{r}
+all_reps.alu.active <-  all_reps.alu %>%
+  filter(status == "transcribed") %>%
+  mutate(quartile = ntile(cov,4)) %>%
+  group_by(asm, name) %>%
+  filter(!(abs(cov - median(cov)) > 2*sd(cov)))
+
+ggplot(all_reps.alu.active, aes(y=medCG, x= as.factor(quartile),fill = as.factor(quartile)))+geom_violin(position=dodge)+geom_boxplot(width=0.2, color="grey", alpha=0.2, outlier.shape = NA, position=dodge)+facet_wrap(~asm)+geom_smooth(method = "lm", se=FALSE, color="black", aes(group=1))
+
+library(ggpubr)
+fit1 <- lm(medCG ~ log10(cov), data = all_reps.alu.active)
+ggplot(all_reps.alu.active, aes(y=medCG, x= cov,color = as.factor(name), alpha=.1))+geom_point()+geom_smooth(method="lm", color = "red", se=F)+facet_wrap(~asm+name, scales = "free")+stat_cor(aes(label = ..rr.label..), color = "red", geom = "label")+labs(x="Coverage", y = "Average Methylation")
+```
+
+```{r}
+#satellite array  56964480        58746125  
+# cen boundaries = array+/-5Mb
+
+all_reps.l1.active <-  all_reps.l1 %>%
+  filter(status == "transcribed") %>%
+  mutate(quartile = ntile(cov,4)) %>%
+#  mutate(cen=case_when(rep_start > 56964480-1000000 & rep_end < 58746125+1000000 ~ "cen", 
+#                       TRUE ~ "non-cen")) %>%
+  group_by(asm) %>%
+  filter(!(abs(cov - median(cov)) > 2*sd(cov)))
+
+ggplot(all_reps.l1.active, aes(y=medCG, x= as.factor(quartile),fill = as.factor(quartile)))+geom_violin(position=dodge)+geom_boxplot(width=0.2, color="grey", alpha=0.2, outlier.shape = NA, position=dodge)+facet_wrap(~asm)+geom_smooth(method = "lm", se=FALSE, color="black", aes(group=1))
+
+fit1 <- lm(medCG ~ log10(cov), data = all_reps.l1.active)
+ggplot(all_reps.l1.active, aes(y=medCG, x= cov, alpha=.5, color = asm))+geom_point()+geom_smooth(method="lm", color = "red", se=F)+facet_wrap(~asm, scales = "free")+theme_classic()+stat_cor(aes(label = ..rr.label..), color = "red", geom = "label")+labs(x="Coverage", y = "Average Methylation")
+```

@@ -344,4 +344,103 @@ ggsave(
 
 ```
 
+```{r}
+
+chrom.sizes <- read_tsv(paste0("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/reference/reference.fasta.fai"), col_names = F) %>%
+  filter(X1 == "chrX") 
+
+L1.exp <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/hg002_chrX_RM_COV_CpCGPC.tsv")) %>%
+  filter(rep_fam=="LINE/L1")%>%
+  filter(cov > 0)
+
+colnames(chrom.sizes) <- c("chromosome", "size")
+
+chrom_order <- c("chrX")
+chrom_key <- setNames(object = as.character(c(1)), 
+                      nm = chrom_order)
+chrom_order <- factor(x = chrom_order, levels = rev(chrom_order))
+
+# convert the chromosome column in each dataset to the ordered factor
+chrom.sizes[["chromosome"]] <- factor(x = chrom.sizes[["chromosome"]], 
+                                      levels = chrom_order)
+
+L1.exp[["chromosome"]] <- factor(x = L1.exp[["seqnames"]], 
+                                     levels = chrom_order)
+
+plot2 <- ggplot(data = chrom.sizes) + 
+    # base rectangles for the chroms, with numeric value for each chrom on the x-axis
+    geom_rect(aes(xmin = as.numeric(chromosome) - 0.2, 
+                  xmax = as.numeric(chromosome) + 0.2, 
+                  ymax = size, ymin = 0), 
+              colour="black", fill = "white") + 
+    # rotate the plot 90 degrees
+    coord_flip() +
+    # black & white color theme 
+    theme(axis.text.x = element_text(colour = "black"), 
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank()) + 
+    # give the appearance of a discrete axis with chrom labels
+    scale_x_discrete(name = "chromosome", limits = names(chrom_key)) +
+
+    # add bands for CNA value
+    geom_rect(data = L1.exp, aes(xmin = as.numeric(chromosome) - 0.2, 
+                                     xmax = as.numeric(chromosome) + 0.2, 
+                                     ymax = rep_end, ymin = rep_start, fill = log10(cov)))
+plot2
+
+p4 <- plot2+scale_fill_gradient(low = "yellow", high = "red", na.value = NA)
+
+exp.alu <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/hg002_chrX_RM_COV_CpCGPC.tsv")) %>%
+  filter(rep_fam=="SINE/Alu")%>%
+  filter(cov > 0)
+
+colnames(chrom.sizes) <- c("chromosome", "size")
+
+chrom_order <- c("chrX")
+chrom_key <- setNames(object = as.character(c(1)), 
+                      nm = chrom_order)
+chrom_order <- factor(x = chrom_order, levels = rev(chrom_order))
+
+# convert the chromosome column in each dataset to the ordered factor
+chrom.sizes[["chromosome"]] <- factor(x = chrom.sizes[["chromosome"]], 
+                                      levels = chrom_order)
+
+exp.alu[["chromosome"]] <- factor(x = exp.alu[["seqnames"]], 
+                                     levels = chrom_order)
+
+plot2 <- ggplot(data = chrom.sizes) + 
+    # base rectangles for the chroms, with numeric value for each chrom on the x-axis
+    geom_rect(aes(xmin = as.numeric(chromosome) - 0.2, 
+                  xmax = as.numeric(chromosome) + 0.2, 
+                  ymax = size, ymin = 0), 
+              colour="black", fill = "white") + 
+    # rotate the plot 90 degrees
+    coord_flip() +
+    # black & white color theme 
+    theme(axis.text.x = element_text(colour = "black"), 
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          panel.background = element_blank()) + 
+    # give the appearance of a discrete axis with chrom labels
+    scale_x_discrete(name = "chromosome", limits = names(chrom_key)) +
+
+    # add bands for CNA value
+    geom_rect(data = exp.alu, aes(xmin = as.numeric(chromosome) - 0.2, 
+                                     xmax = as.numeric(chromosome) + 0.2, 
+                                     ymax = rep_end, ymin = rep_start, fill = log10(cov)))
+
+p5 <- plot2+scale_fill_gradient(low = "yellow", high = "red", na.value = NA)
+
+p4
+p5
+#ggsave(
+#  paste0(figs, "/HG002_AccessibilityIdeo.pdf"),
+#  plot = p1,
+#  scale = 1,
+#  width = 10,
+#  height = 3
+#)
+plot_grid(p1,p2,p4,p5, align="v", ncol=1)
+```
 

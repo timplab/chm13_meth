@@ -1,0 +1,97 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r include=FALSE}
+#This rmarkdown takes RNA-seq coverage files for HG002 chromosome X and chm13 chromosome X merges with methylation calls and generates merged files for average methylation and per base methylation 
+
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,  message=FALSE)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+library(BSgenome)
+options(scipen=999)
+library(ggridges)
+library(GenomicRanges)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+```
+
+```{r}
+hg002.reps <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/hg002_chrX_RM_COV_CpCGPC.tsv")) %>%
+  mutate(asm="hg002")  %>%
+ separate(rep_fam, c("group","fam"), sep="/") %>%
+  filter(group != "DNA?") %>%
+  filter(group != "Unspecified")
+
+ggplot(hg002.reps, aes(y=medGC, x=reorder(group, medGC, FUN = median), fill=group))+geom_boxplot(outlier.shape = NA)+theme_classic()+coord_cartesian(ylim=c(0,.5))
+
+ggsave(
+  paste0(figs, "/HG002_chrX_RM_GPC_boxplot.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 10,
+  height = 10,
+)
+
+ggplot(hg002.reps, aes(y=medCG, x=reorder(group, medGC, FUN = median), fill=group))+geom_boxplot(outlier.shape = NA)+theme_classic()#+coord_cartesian(ylim=c(0,.5))
+
+ggsave(
+  paste0(figs, "/HG002_chrX_RM_CPG_boxplot.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 10,
+  height = 10,
+)
+```
+
+```{r}
+hg002_gc <- read_tsv(paste0(dat, "/HG002/nanonome/methylation_calls/whole_genome/pooled/HG002_nanonome_GpCmethylationFrequency.tsv")) %>%
+  GRanges()
+
+p <- read_tsv(paste0(dat, "/proseq/51mers/IlluminaPCRfree_20200922-assembly_51mers_single_mrg_meryl.over.CHM13-5A_proseq_cutadapt-2_bt2-vs-filtered_bt2-N0-k100-chm13-20200922_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) %>%
+  filter(chr != "chrX")
+x <- read_tsv(paste0(dat, "/TE/rm_v2.0/hg002_k51_chrX_single-mrg_meryl.over.HG002_RNAseq_SRR13086640_cutadapt-m100_bt2-N0-k100-HG002-chrX_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) 
+
+r1 <- rbind(p,x) %>%
+  mutate(ID=row_number())
+r2.gr <- GRanges(r1)
+```
+
+```{r}
+
+keepi <- findOverlaps(hg002_gc,r2.gr)
+freq.matched <- hg002_gc[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(r2.gr[subjectHits(keepi)]))
+
+rm.gc <- as.data.frame(freq.matched) %>%
+  separate(rep_fam, into=c("class", "fam"), sep="/") %>%
+  filter(class != "DNA?")
+
+ggplot(rm.gc, aes(y=methylated_frequency, x=reorder(class, methylated_frequency, FUN = median), fill=class))+geom_boxplot(outlier.shape = NA)+theme_classic()+coord_cartesian(ylim=c(0,.5))+geom_hline(yintercept = c(.1580,.2130,.2676), linetype = "dashed")
+
+ggsave(
+  paste0(figs, "/HG002_chrX_RM_GPC_boxplotWG.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 10,
+  height = 10,
+)
+
+summary(rm.gc$methylated_frequencQ1y)
+```
+

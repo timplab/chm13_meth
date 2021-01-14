@@ -260,4 +260,21 @@ ggsave(
 )
 
 ```
+```{r}
+# look at cen19 without filtering for read length to show methylation profile is very different
+chr="chr19"
+
+reads <- tabix_mbed(paste0(dat, "/censat/", chr, "_cen.mbed"),extcol = "motif",by = "read") 
+#129004453       142241828 
+
+
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+ # filter(rlen >= 50000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+```
 
