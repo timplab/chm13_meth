@@ -1,0 +1,205 @@
+---
+title: "Nucleosomes CENX"
+author: "G$"
+date: "1/16/2021"
+output: html_document
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggpmisc)
+library(Repitools)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r mbed}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+```
+
+```{r}
+chr19_hor <- read_tsv(paste0(dat, "/censat/HOR_decomp/hordecomposition_cen19_v1.0_naive.bed"), col_names = c("chr", "start", "end", "name", "div", "strand")) %>%
+  mutate(len = end-start) %>%
+  separate(name,c("S", "name"), sep=c("/")) 
+
+chm13_meth <- read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb_split.tsv")) %>%
+  mutate(called_sites_unmethylated = called_sites - called_sites_methylated) %>%
+  GRanges()
+```
+
+```{r}
+
+###functions#####
+
+CalculateCpG <- function (obj, ..., step, width, as.prob, as.array, fast.moving.side,with.labels) 
+{
+  require(BSgenome)
+  seqs <- getSeq(obj, ..., as.character = FALSE)
+  if (missing(step)) {
+    res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,7]
+  }
+  else {
+    res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, width = 2, step = step, as.prob = as.prob, as.array = as.array,fast.moving.side=fast.moving.side,with.labels=with.labels)[,7])
+    if (length(res) == 1) 
+      res <- unlist(res)
+  }
+  res
+}
+########
+
+CalculateGpC <- function (obj, ..., step, width, as.prob, as.array, fast.moving.side,with.labels) 
+{
+  require(BSgenome)
+  seqs <- getSeq(obj, ..., as.character = FALSE)
+  if (missing(step)) {
+    res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,10]
+  }
+  else {
+    res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, width = 2, step = step, as.prob = as.prob, as.array = as.array,fast.moving.side=fast.moving.side,with.labels=with.labels)[,7])
+    if (length(res) == 1) 
+      res <- unlist(res)
+  }
+  res
+}
+
+CalculateTpG <- function (obj, ..., step, width, as.prob, as.array, fast.moving.side,with.labels) 
+{
+  require(BSgenome)
+  seqs <- getSeq(obj, ..., as.character = FALSE)
+  if (missing(step)) {
+    res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,15]
+  }
+  else {
+    res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, width = 2, step = step, as.prob = as.prob, as.array = as.array,fast.moving.side=fast.moving.side,with.labels=with.labels)[,7])
+    if (length(res) == 1) 
+      res <- unlist(res)
+  }
+  res
+}
+
+CalculateTpA <- function (obj, ..., step, width, as.prob, as.array, fast.moving.side,with.labels) 
+{
+  require(BSgenome)
+  seqs <- getSeq(obj, ..., as.character = FALSE)
+  if (missing(step)) {
+    res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,13]
+  }
+  else {
+    res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, width = 2, step = step, as.prob = as.prob, as.array = as.array,fast.moving.side=fast.moving.side,with.labels=with.labels)[,7])
+    if (length(res) == 1) 
+      res <- unlist(res)
+  }
+  res
+}
+
+CalculateApT <- function (obj, ..., step, width, as.prob, as.array, fast.moving.side,with.labels) 
+{
+  require(BSgenome)
+  seqs <- getSeq(obj, ..., as.character = FALSE)
+  if (missing(step)) {
+    res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,4]
+  }
+  else {
+    res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, width = 2, step = step, as.prob = as.prob, as.array = as.array,fast.moving.side=fast.moving.side,with.labels=with.labels)[,7])
+    if (length(res) == 1) 
+      res <- unlist(res)
+  }
+  res
+}
+
+chm13_CG <- CalculateCpG(BSgenome.t2t.v1.0.release, chr19_hor, as.prob = F)
+chm13_GC <- CalculateGpC(BSgenome.t2t.v1.0.release, chr19_hor, as.prob = F)
+chm13_TG <- CalculateTpG(BSgenome.t2t.v1.0.release, chr19_hor, as.prob = F)
+
+chm13 <- GRanges(chr19_hor, CpG = chm13_CG)
+
+mcols(chr19_hor) <- cbind.data.frame(mcols(chr19_hor), (as.data.frame(chm13_CG)), (as.data.frame(chm13_GC)),(as.data.frame(chm13_TG)))
+chr19_CG <- as.data.frame(chr19_hor) %>%
+#  group_by(S, div) %>%
+  mutate(CG_2_GC_ratio=chm13_CG/chm13_GC, TG_2_GC_ratio = chm13_TG/chm13_GC) 
+
+c <- cor(chr19_CG$div, chr19_CG$TG_2_GC_ratio)
+title <- sprintf("N = %d r = %.3f", nrow(chr19_CG), c)
+ggplot(chr19_CG, aes(x=div, y=TG_2_GC_ratio, color=S))+geom_point()+labs(title = title)
+
+
+
+c <- cor(chr19_CG$div, chr19_CG$CG_2_GC_ratio)
+title <- sprintf("N = %d r = %.3f", nrow(chr19_CG), c)
+ggplot(chr19_CG, aes(x=div, y=CG_2_GC_ratio))+geom_point()+labs(title = title)
+
+```
+
+```{r}
+list=c("HOR", "MON")
+censat = read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_annotationTab.bed"), col_names = F) %>%
+  mutate(name = ifelse(grepl("HSat1", X4), "HSAT1", X4)) %>%
+  mutate(name = ifelse(grepl("HSat2", X4), "HSAT2", name)) %>%
+  mutate(name = ifelse(grepl("HSat3", X4), "HSAT3", name)) %>%
+  mutate(name = ifelse(grepl("HSat4", X4), "HSAT4", name)) %>%
+  mutate(name = ifelse(grepl("HSat5", X4), "HSAT5", name)) %>%
+  mutate(name = ifelse(grepl("HSat6", X4), "HSAT6", name)) %>%
+  mutate(name = ifelse(grepl("ct", X4), "CT", name)) %>%
+  mutate(name = ifelse(grepl("bsat", X4), "BSAT", name)) %>%
+  mutate(name = ifelse(grepl("hor", X4), "HOR", name)) %>%
+  mutate(name = ifelse(grepl("mon", X4), "MON", name)) %>%
+  mutate(name = ifelse(grepl("Alu", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("SATR", X4), "SATR", name)) %>%
+  mutate(name = ifelse(grepl("ACRO", X4), "ACRO", name)) %>%
+  mutate(name = ifelse(grepl("GSATII", X4), "GSAT", name)) %>%
+  mutate(name = ifelse(grepl("TAR", X4), "TAR", name)) %>%
+  mutate(name = ifelse(grepl("TE", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("MER", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("MST", X4), "MST", name)) %>%
+  mutate(name = ifelse(grepl("CER", X4), "CER", name)) %>%
+  mutate(name = ifelse(grepl("L1", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("SST", X4), "SST", name)) %>%
+  mutate(name = ifelse(grepl("LSAU", X4), "LSAU", name)) %>%
+  mutate(name = ifelse(grepl("GSAT", X4), "GSAT", name)) %>%
+  mutate(name = ifelse(grepl("MSAT", X4), "MSAT", name)) %>%
+  mutate(name = ifelse(grepl("novel", X4), "novel", name)) %>%
+  mutate(name = ifelse(grepl("HERV", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("LT", X4), "TE", name)) %>%
+  dplyr::select(c(X1, X2, X3, name)) %>%
+  dplyr::rename("chrom" =1, "start" = 2 ,"end" =3) %>%
+  filter(name %in% list)
+
+censat.gr <- GRanges(as.data.frame(censat))
+```
+
+
+```{r}
+
+CG <- CalculateCpG(BSgenome.t2t.v1.0.release, censat.gr, as.prob = F)
+GC <- CalculateGpC(BSgenome.t2t.v1.0.release, censat.gr, as.prob = F)
+TG <- CalculateTpG(BSgenome.t2t.v1.0.release, censat.gr, as.prob = F)
+AT <- CalculateApT(BSgenome.t2t.v1.0.release, censat.gr, as.prob = F)
+TA <- CalculateTpA(BSgenome.t2t.v1.0.release, censat.gr, as.prob = F)
+
+
+mcols(censat.gr) <- cbind.data.frame(mcols(censat.gr), (as.data.frame(CG)), (as.data.frame(GC)),(as.data.frame(TG)),(as.data.frame(AT)),(as.data.frame(TA)))
+
+censat_cg <- as.data.frame(censat.gr) %>%
+  mutate(CG_2_GC = CG/GC) %>%
+  mutate(TG_2_GC = TG/GC) %>%
+  mutate(TA_2_AT=TA/AT)
+
+ggplot(censat_cg, aes(y=CG_2_GC, x=seqnames, fill=name))+geom_bar()
+
+ggplot(censat_cg, aes(y=TG_2_GC, x=seqnames, fill=name))+geom_boxplot(outlier.shape = NA)
+ggplot(censat_cg, aes(y=TA_2_AT, x=seqnames, fill=name))+geom_boxplot(outlier.shape = NA)
+```
+

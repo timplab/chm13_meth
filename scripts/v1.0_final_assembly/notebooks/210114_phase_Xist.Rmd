@@ -1,0 +1,409 @@
+---
+title: "load_methyl_bed"
+author: "G$"
+date: "9/3/2020"
+output: pdf_document
+---
+
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+library(mclust)
+```
+
+```{r mbed}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/allele_specific_meth/xist"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+```
+
+```{r, function}
+  
+order_reads_facet <- function(x,offset = 0, bounds=NULL, qorder = NULL){
+  # get boundaries of reads if not provided
+  if (is.null(bounds)){
+    bounds <- x %>% group_by(qname, group) %>%
+      summarize(start = min(start),
+                end = max(end))
+    # label y based on order of smallest start
+    # if q order is given, use this to order
+    if (!is.null(qorder)) {
+      bounds <- bounds %>%
+        mutate(qname = factor(qname,levels = qorder)) %>%
+        arrange(qname) 
+    } else {
+      bounds<- bounds %>% 
+        arrange(start, end) 
+    }
+    bounds <- bounds %>%
+      ungroup() %>%
+      group_by(group) %>%
+        mutate(
+          readi = row_number(),
+          ymin = -readi - 0.8 - offset, 
+          ymax = ymin + 0.6)
+  }
+  
+  x <- x %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  bounds <- bounds %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  return(list(x = x,bounds = bounds))
+}
+
+repeatColors =c("HSAT2"="#C19935",
+                "HSAT1"="#A2A638",
+                "HSAT3"="#8CAC3E",
+                "(CATTC)n" = "#E87C71",
+                "HSAT4"="#53B0E3",
+                "HSAT5"="#ED72A5",
+                "HSAT6"="#EF768C", 
+                "(GAATC)n"="#E28455",
+                "ALR/Alpha"="#D78C32",
+                "6kbHsap" = "#D8BFD8",
+                "BSR/Beta"="#E370AB",
+                "CER" = "#CE9334",
+                "DNA"="#C19935",
+                "DNA?"="#C19935",
+                "GSAT"="#4169E1",
+                "LINE"="#FFA500",
+                "Low_complexity"="#75B042",
+                "LSAU"="#54B346",
+                "LTR"="#51B756",
+                "RC"="#53BB73",
+                "Retroposon"="#55BE8D",
+                "RNA"="#54C0A5",
+                "rRNA"="#52BEBB",
+                "SAR"="#51BDCE",
+                "SATR2"="#4EB8DF",
+                "GSATII"="#6B8E23",
+                "SATR1"="#5AA5DA",
+                "scRNA"="#6B9AD2",
+                "Simple_repeat"="#8992C8",
+                "SINE"="#9A8AC1",
+                "snRNA"="#A885BC",
+                "srpRNA"="#B67EB6",
+                "SST1"="#C378B2",
+                "HSATII"="#D173AF",
+                "tRNA"="#006400",
+                "ACRO1"="#9400D3",
+                "Unknown"="#BA55D3", 
+                "(GAATG)n"="#ff4000",
+                "D20S16" = "#ffbf00", 
+                "SATR2"= "#0080ff", 
+                "TAR1" = "#000080", 
+                "SUBTEL2_sat"= "#FFB6C1", 
+                "GSATX" = "#D2691E", 
+                "MSR1" = "#708090")
+```
+
+```{r}
+ch <- read_tsv(paste0(dat, "/TE/rm_v2.0/whole_genome_chrX/chrX-PARremoved_chm13_k51_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k100_chm13-20200922_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov"))
+```
+
+```{r}
+chm13_meth <- read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb_split.tsv")) %>%
+  mutate(called_sites_unmethylated = called_sites - called_sites_methylated) %>%
+  GRanges()
+  library(BSgenome.t2t.v1.0.release)
+  
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+  binnedMean <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewMeans(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+  
+
+
+chr.meth <- chm13_meth[seqnames(chm13_meth) == chr]
+    
+  
+  blocks <- genomeBlocks(BSgenome.t2t.v1.0.release, chrs = seqnames(BSgenome.t2t.v1.0.release), width = 5000)
+  score1 <- coverage(chr.meth, weight="called_sites_methylated")
+  score2 <- coverage(chr.meth, weight="called_sites_unmethylated")
+  score3 <- coverage(chr.meth, weight="num_motifs_in_group")
+  
+  
+  binned_meth <- binnedSum(blocks, numvar = score1, "called_sites_methylated") %>%
+    as.data.frame()
+  binned_unmeth <-binnedSum(blocks, numvar = score2, "called_sites_unmethylated")%>%
+    as.data.frame()
+  binned_cov <- binnedMean(blocks, numvar = score3, "num_motifs_in_group") %>%
+    as.data.frame()
+  
+
+  
+meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames", "width", "strand")) %>%
+  merge(binned_cov, by = c("start", "end", "seqnames", "width", "strand")) %>%
+    filter(seqnames == chr) %>%
+    filter(start > rstart) %>%
+    filter(end < rend) %>%
+    group_by(start, end) %>%
+    mutate(sites = called_sites_methylated+called_sites_unmethylated) %>%
+    mutate(freq = called_sites_methylated/sites) %>%
+    ungroup() %>%
+    mutate(smooth = rollmean(freq, 3, fill = NA), site_smooth = rollmean(num_motifs_in_group, 3, fill = NA)) 
+```
+
+```{r bis, echo=F}
+rstart=71645742-20000
+rend=73048269+20000
+meth <- ggplot(meth_bins, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim(rstart/1e6,rend/1e6)
+
+list=c("L1HS","L1P")
+L1 <- ch %>%
+  filter(rep_fam == "LINE/L1") %>%
+  mutate(name = ifelse(grepl("L1HS", rep_type), "L1HS", rep_type)) %>%
+  mutate(name = ifelse(grepl("L1P", rep_type), "L1P", name)) %>%
+  mutate(name = ifelse(grepl("L1M", rep_type), "L1M", name)) %>%
+  filter(name %in% list) %>%
+  group_by(name) %>%
+  mutate(quartile = ntile(cov, 4)) %>%
+  filter(chr == chr) %>%
+  filter(start > rstart) %>%
+  filter(end < rend) %>%
+  filter(end-start > 5000)
+
+rep_leg2 <- ggplot(data=L1, mapping=aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1, fill = name))+
+  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(rstart/1e6,rend/1e6) +labs(y="Axis")+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())# +  theme_void()
+
+
+top_row <- plot_grid(rep_leg2,meth, ncol = 1, align="v", rel_heights = c(1/4, 1/2))
+top_row
+
+
+ggsave(
+  paste0(figs, "/", chr, "CHM13_XIC_methyl_pattern.pdf"),
+  plot = top_row,
+  scale = 1,
+  width = 12,
+  height = 6,
+)
+
+```
+
+```{r mclust, echo=F}
+reads <- tabix_mbed(paste0(dat, "/censat/xist.mbed"),extcol = "motif",by = "read") 
+#chrX:72,284,393-72,286,249
+chr="chrX"
+rstart=72284393
+rend=72286249
+size_sel <- reads %>%
+  dplyr::mutate(rlen = end-start) %>%
+  filter(rlen >= 50000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+  cgcalls_sub <- cgcalls %>%
+  filter(start > rstart) %>%
+  filter(start < rend) %>%
+  dplyr::select(c(qname, start,mcall)) 
+
+  allele <- cgcalls_sub %>%
+    group_by(qname) %>%
+    summarise(mfreq = mean(mcall))%>%
+    mutate(group = case_when(mfreq > .5 ~ "meth", 
+                         mfreq < .5 ~ "unmeth")) %>%
+    dplyr::select(c(qname, group))
+  
+  mat <- spread(cgcalls_sub, start, mcall)
+  mat <- mat  %>%
+  column_to_rownames("qname")
+  
+  mat[is.na(mat)] <- -1
+  model1 <- Mclust(mat,G = 1:2, modelNames = "EII")
+  summary(model1)
+  clust <- model1$classification
+  
+
+  
+  datf <- as.data.frame(unlist(clust)) %>%
+  rownames_to_column() %>%
+  dplyr::rename("qname" = 1, "clust" = 2)
+  
+ datf <-  merge(datf, allele, by = "qname")
+  num = mean(datf$clust)
+
+```
+
+```{r}
+zstart=72245131
+zend=72331858
+```
+
+```{r plot, echo=F}
+
+
+df_meth <- datf %>%
+  distinct() %>%
+  dplyr::select(c(qname, group)) %>%
+  distinct() %>%
+  group_by(qname) %>%
+  dplyr::slice(1L) %>%
+  na.omit()
+
+cpg_runs <-getRuns(cgcalls, maxGap = 150)
+
+all_runs <- merge(cpg_runs,df_meth, by = "qname" )
+
+cpg_runs.ordered <- order_reads_facet(all_runs)
+
+
+
+cpg_runs_plot <- cpg_runs.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+  
+
+
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+
+g <- ggplot(cpg_runs_plot,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax))+ geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80")+ 
+    geom_rect(aes(fill = m)) +scale_fill_manual(name = "State", values = meth_pal)+coord_cartesian(xlim=c(zstart-100000, zend+100000))+theme_classic()+facet_wrap(~group, ncol =1)+theme(legend.position = "bottom")+ theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+geom_vline(xintercept = c(72253968,72286070), linetype = "dotted")
+  
+
+L1.plot <- ggplot(L1, aes(xmin = start, xmax = end, ymin=0, ymax=.1,fill = name))+geom_rect()+ theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+coord_cartesian(xlim=c(zstart-100000, zend+100000))+theme(legend.position = "bottom")
+
+
+plot <- plot_grid(g,L1.plot, ncol = 1, align="v", rel_heights = c(1, 1/3))
+print(plot)
+
+#ggsave(
+#  paste0(figs, "/","Xist_phased_readlevel.pdf"),
+#  plot = plot,
+#  scale = 1,
+#  width = 10,
+#  height = 10,
+#)
+
+```
+```{r}
+g <- ggplot(cpg_runs_plot,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax))+ geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80")+ 
+    geom_rect(aes(fill = m)) +scale_fill_manual(name = "State", values = meth_pal)+coord_cartesian(xlim=c(72200000, 72215000))+theme_classic()+facet_wrap(~group, ncol =1)+theme(legend.position = "none")+ theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+geom_vline(xintercept = c(72253968,72286070), linetype = "dotted")
+  
+reps <- ch %>%
+  filter(start > 72200000) %>%
+  filter(end < 72215000)
+L1.plot <- ggplot(reps, aes(xmin = start, xmax = end, ymin=0, ymax=.1,fill = rep_type))+geom_rect()+ theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+coord_cartesian(xlim=c(72200000, 72215000))+theme(legend.position = "bottom")
+
+
+plot <- plot_grid(g,L1.plot, ncol = 1, align="v", rel_heights = c(1, 1/2))
+print(plot)
+
+ggsave(
+  paste0(figs, "/","Xist_phased_readlevelUpstreamRepeat.pdf"),
+  plot = plot,
+  scale = 1,
+  width = 10,
+  height = 10,
+)
+```
+
+
+```{r}
+
+phased_calls <- merge(cgcalls,df_meth, by = "qname") 
+
+bis2 <- phased_calls %>% 
+  group_by(group, start) %>%
+  summarise(meth_freq = mean(mcall), cov = n()) %>%
+  mutate(smooth = rollmean(meth_freq, 50, fill = NA)) %>%
+  mutate(cov_smooth = rollmean(cov, 50, fill = NA))
+
+meth <- ggplot(bis2, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+facet_wrap(~group, ncol = 1)+xlim(zstart/1e6, zend/1e6)
+meth
+
+
+```
+
+```{r}
+q.gr <- q %>%
+  mutate(ID = row_number()) %>%
+  dplyr::rename("chr"=1, "start"=2, "end"=3, "type"=4, "len"=5, "strand"=6) %>%
+  GRanges()
+
+phased <- phased_calls %>%
+  group_by(start,group) %>%
+  mutate(avgmeth = mean(mcall)) %>%
+  select(chrom, start, end, avgmeth, group) %>%
+  distinct() %>%
+  GRanges()
+
+keepi <- findOverlaps(phased,q.gr)
+freq.matched <- phased[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(q.gr[subjectHits(keepi)]))
+
+rm_meth <- as.data.frame(freq.matched) %>%
+  group_by(ID, group) %>%
+#  mutate(start = min(start), end = max(end)) %>%
+ # mutate(meth = mean(avgmeth)) %>%
+ # select(start,end, meth, group, ID) %>%
+ # distinct() %>%
+  spread(group, avgmeth) %>%
+  mutate(meth_diff = abs(meth - unmeth))
+
+meth <- ggplot(rm_meth, aes(x = X8,y = meth_diff, color = X8))+geom_dotplot(binaxis='y', stackdir='center',
+               stackratio=1.5, dotsize=1)
+print(meth)
+
+meth <- ggplot(rm_meth, aes(x = start, y = meth_diff, color = X8))+geom_bar(stat = "identity")+ylim(-1,1)
+print(meth)
+
+#ggsave(
+#  paste0(figs, "/","Xist_phased_methdiff.pdf"),
+#  plot = meth,
+#  scale = 1,
+#  width = 10,
+#  height = 5,
+#)
+```
+

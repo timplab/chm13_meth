@@ -1,0 +1,178 @@
+---
+title: "Compare Coverage between multimapping thresholds"
+author: "G$"
+date: "1/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/TE/210119_multimap_test"
+
+k10 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k10_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) %>%
+  filter(start > 1929208-1)%>%
+  mutate(ID = row_number()) %>%
+  rename(cov = "cov_k10") %>%
+  dplyr::select(c(cov_k10))
+
+k50 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k50_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov"))%>%
+  filter(start > 1929208-1) %>%
+  mutate(ID = row_number()) %>%
+  rename(cov = "cov_k50") %>%
+  dplyr::select(c(cov_k50))
+
+k100 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k100_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) %>%
+  filter(start > 1929208-1) %>%
+  mutate(ID = row_number()) %>%
+  rename(cov = "cov_k100") %>%
+  dplyr::select(c(cov_k100))
+
+k200 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k200_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) %>%
+  filter(start > 1929208-1) %>%
+  mutate(ID = row_number()) %>%
+  rename(cov = "cov_k200") %>%
+  dplyr::select(c(cov_k200))
+
+k1000 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k1000_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov"))  %>%
+  filter(start > 1929208-1) %>%
+  mutate(ID = row_number()) %>%
+  rename(cov = "cov_k1000") %>%
+  dplyr::select(c(cov_k1000))
+
+WG <- read_tsv(paste0(dat,"/chm13_whole_genome/chrX-PARremoved_chm13_k51_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k100_chm13-20200922_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov"))  %>%
+  mutate(ID = row_number()) %>%
+  rename(cov = "cov_WG") 
+
+cov.all <- cbind(k10,k50,k100,k200,k1000,WG)
+```
+
+
+```{r pressure, echo=FALSE}
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+summary(lm(cov_k10~ cov_WG, data=cov.all))
+c <- cor(cov.all$cov_k10, cov.all$cov_WG)
+title <- sprintf("N = %d r = %.3f", nrow(cov.all), c)
+ggplot(cov.all, aes(log10(cov_k10), log10(cov_WG))) +
+    geom_bin2d(bins=50) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("K10") +
+    ylab("WG") +
+    theme_bw(base_size=20) +
+    ggtitle(title)
+
+```
+
+```{r pressure, echo=FALSE}
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+c <- cor(cov.all$cov_k50, cov.all$cov_WG)
+title <- sprintf("N = %d r = %.3f", nrow(cov.all), c)
+ggplot(cov.all, aes(log10(cov_k50), log10(cov_WG))) +
+    geom_bin2d(bins=50) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("K50") +
+    ylab("WG") +
+    theme_bw(base_size=20) +
+    ggtitle(title)
+
+
+```
+```{r pressure, echo=FALSE}
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+c <- cor(cov.all$cov_k100, cov.all$cov_WG)
+title <- sprintf("N = %d r = %.3f", nrow(cov.all), c)
+ggplot(cov.all, aes(log10(cov_k100), log10(cov_WG))) +
+    geom_bin2d(bins=50) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("K100") +
+    ylab("WG") +
+    theme_bw(base_size=20) +
+    ggtitle(title)
+
+
+```
+
+```{r pressure, echo=FALSE}
+cov.alu <- cov.all %>%
+  filter(rep_fam == "SINE/Alu")
+
+
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+c <- cor(cov.alu$cov_k50, cov.alu$cov_WG)
+title <- sprintf("N = %d r = %.3f", nrow(cov.alu), c)
+ggplot(cov.alu, aes(log10(cov_k50), log10(cov_WG))) +
+    geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("K50") +
+    ylab("WG") +
+    theme_bw(base_size=20) +
+    ggtitle(title)
+
+```
+
+
+```{r pressure, echo=FALSE}
+
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+c <- cor(cov.alu$cov_k100, cov.alu$cov_WG)
+title <- sprintf("N = %d r = %.3f", nrow(cov.alu), c)
+ggplot(cov.alu, aes(log10(cov_k100), log10(cov_WG))) +
+    geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("K100") +
+    ylab("WG") +
+    theme_bw(base_size=20) +
+    ggtitle(title)
+
+ggplot(cov.alu, aes(cov_k100, cov_WG)) +
+    geom_point()+
+    xlab("K100") +
+    ylab("WG") +
+    theme_bw(base_size=20) +
+    ggtitle(title) +
+    scale_x_log10()+scale_y_log10()
+
+```
+
+
+```{r pressure, echo=FALSE}
+
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+c <- cor(cov.alu$cov_k10, cov.alu$cov_WG)
+title <- sprintf("N = %d r = %.3f", nrow(cov.alu), c)
+ggplot(cov.alu, aes(log10(cov_k10), log10(cov_WG))) +
+    geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("K10") +
+    ylab("WG") +
+    theme_bw(base_size=20) +
+    ggtitle(title)
+
+```
+
+```{r pressure, echo=FALSE}
+cov.alu <- cov.all %>%
+  filter(rep_fam == "LINE/L1")
+
+
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+c <- cor(cov.alu$cov_k50, cov.alu$cov_WG)
+title <- sprintf("N = %d r = %.3f", nrow(cov.alu), c)
+ggplot(cov.alu, aes(log10(cov_k50), log10(cov_WG))) +
+    geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("K50") +
+    ylab("WG") +
+    theme_bw(base_size=20) +
+    ggtitle(title)
+
+```

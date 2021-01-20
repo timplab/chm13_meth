@@ -1,0 +1,321 @@
+---
+title: "TE quartiles"
+author: "Ariel"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
+mainfont: DejaVu Sans
+titlefont: DejaVu Sans
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,  message=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(wesanderson)
+library(ggExtra)
+library(biovizBase)
+library(Repitools)
+library(Biostrings)
+library(ggplot2)
+library(BSgenome)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggridges)
+library(GenomicRanges)
+library(RColorBrewer)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+library(gridExtra) 
+library(pheatmap)
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r loadData, include=F}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+hg002_meth <- read_tsv(paste0(dat, "/HG002/nanonome/methylation_calls/whole_genome/pooled/HG002_nanonome_CpGmethylationFrequency.tsv")) %>%
+  GRanges()
+hg002_gc <- read_tsv(paste0(dat, "/HG002/nanonome/methylation_calls/whole_genome/pooled/HG002_nanonome_GpCmethylationFrequency.tsv")) %>%
+  GRanges()
+
+p <- read_tsv(paste0(dat, "/proseq/51mers/IlluminaPCRfree_20200922-assembly_51mers_single_mrg_meryl.over.CHM13-5A_proseq_cutadapt-2_bt2-vs-filtered_bt2-N0-k100-chm13-20200922_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) %>%
+  filter(chr != "chrX")
+x <- read_tsv(paste0(dat, "/TE/rm_v2.0/hg002_k51_chrX_single-mrg_meryl.over.HG002_RNAseq_SRR13086640_cutadapt-m100_bt2-N0-k100-HG002-chrX_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) 
+
+r1 <- rbind(p,x)
+```
+
+
+
+```{r}
+list=c("L1HS","L1P")
+rm <- r1 %>%
+#  filter(!(abs(perc_sub - median(perc_sub)) > 2*sd(perc_sub))) %>%
+  filter(rep_fam == "LINE/L1") %>%
+    mutate(name = ifelse(grepl("L1HS", rep_type), "L1HS", rep_type)) %>%
+  mutate(name = ifelse(grepl("L1P", rep_type), "L1P", name)) %>%
+  filter(name %in% list) %>%
+  mutate(ID = row_number()) %>%
+  filter(end-start > 5000) %>%
+  mutate(status=case_when(cov < 500 ~ "untranscribed", 
+                          TRUE ~ "transcribed")) %>%
+  group_by(perc_sub) %>%
+mutate(quartile = as.factor(ntile(perc_sub, 3)))%>%
+  na.omit()
+
+
+flankn <- 5000
+
+bodylen <- 1
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_meth, l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_meth[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(comp == "+",start - gene_start, gene_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+n_windows=100
+chm13.ovl$cut = cut(chm13.ovl$dist, breaks=n_windows)
+
+chm13.ovl.labs <- chm13.ovl %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+ # filter(quartile != 0) %>%
+  group_by(cut,perc_sub) %>%
+#  mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  summarise(med = median(methylated_frequency), top = quantile(methylated_frequency, 0.75), bot = quantile(methylated_frequency, 0.25), n_genes = length(methylated_frequency), status=status) %>%
+  mutate(x_tmp = str_sub(cut, 2, -2)) %>% 
+  separate(x_tmp, c("min", "max"), sep = ",") %>% 
+  mutate_at(c("min", "max"), as.double) %>%
+  ungroup() %>%
+  group_by(perc_sub,status) %>%
+  arrange(min) %>%
+  mutate(med_smooth = rollmean(med, 4, NA))
+
+
+plot <- ggplot(chm13.ovl.labs,aes(x=min,y=perc_sub,fill=med_smooth))+ geom_tile()+scale_fill_gradientn(colours = rev(rainbow(5)), limits=c(0,1))+scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1), labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen)+theme(legend.position = "left", legend.direction="vertical")+ylim(0,35)+facet_wrap(~status)
+
+plot
+
+#ggsave(
+#  paste0(figs, "/evol_meth/TE/","L1_methAge_heatmapSmoothHG002-WG.pdf"),
+#  plot = last_plot(),
+#  scale = 1,
+#  width = 8,
+#  height = 10,
+#)
+```
+
+
+```{r}
+
+flankn <- 2000
+
+bodylen <- 6000/2000
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_gc, l1_regions)
+
+
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_gc[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(comp == "+",start - gene_start, gene_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+n_windows=1500
+chm13.ovl$cut = cut(chm13.ovl$dist, breaks=n_windows)
+
+order <- chm13.ovl %>%
+  dplyr::select(c(ID, perc_sub)) %>%
+  distinct() %>%
+  #group_by(ID) %>%
+  mutate(bin = ntile(perc_sub, 200))
+  
+ovl.y <- merge(chm13.ovl, order, by = "ID")
+
+chm13.ovl.labs <- ovl.y %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+ # filter(quartile != 0) %>%
+  group_by(cut,bin) %>%
+ # mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  summarise(med = median(methylated_frequency), top = quantile(methylated_frequency, 0.75), bot = quantile(methylated_frequency, 0.25), n_genes = length(methylated_frequency),ID=ID) %>%
+  mutate(x_tmp = str_sub(cut, 2, -2)) %>% 
+  separate(x_tmp, c("min", "max"), sep = ",") %>% 
+  mutate_at(c("min", "max"), as.double) %>%
+  ungroup() %>%
+  distinct() %>%
+  group_by(bin) %>%
+  arrange(min) %>%
+  mutate(med_smooth = rollmean(med, 30, NA))
+
+
+
+plot <- ggplot(chm13.ovl.labs,aes(x=min,y=bin,fill=med_smooth))+ geom_tile()+scale_fill_gradientn(colours = (rainbow((5))))+scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1), labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb"))) +geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen)+theme(legend.position = "left", legend.direction="vertical")
+
+plot
+
+ggsave(
+  paste0(figs, "/evol_meth/TE/","L1P_Honly_methAge_heatmapSmoothHG002GC-WG.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 10,
+  height = 6,
+)
+```
+
+
+```{r aggplot, fig.width=10, fig.height=4}
+flankn <- 2000
+
+bodylen <- 6000/2000
+l1_regions <- rm %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(hg002_gc, l1_regions)
+genes.ovl <- as.data.frame(rm)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end) 
+
+chm13.ovl <- as.data.frame(hg002_gc[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(comp == "+",start - gene_start, gene_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    )
+
+n_windows=3000
+chm13.ovl$cut = cut(chm13.ovl$dist, breaks=n_windows)
+
+chm13.ovl.labs <- chm13.ovl %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+ # filter(quartile != 0) %>%
+  group_by(cut,name) %>%
+ # mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  summarise(med = median(methylated_frequency), top = quantile(methylated_frequency, 0.75), bot = quantile(methylated_frequency, 0.25), n_genes = length(methylated_frequency),name=name,status=status) %>%
+  mutate(x_tmp = str_sub(cut, 2, -2)) %>% 
+  separate(x_tmp, c("min", "max"), sep = ",") %>% 
+  mutate_at(c("min", "max"), as.double) %>%
+  ungroup() %>%
+  distinct() %>%
+  group_by(name) %>%
+  arrange(min) %>%
+  mutate(med_smooth = rollmean(med, 50, NA))
+
+
+# 4 is lowest divergence (youngest) 1 is highest divergence (oldest)
+p <- ggplot(chm13.ovl.labs,aes( x = min, y = med_smooth, color =name), alpha=.5)+
+#  geom_smooth(method = "loess", span = 0.12,se = F)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+ # geom_ribbon(aes(ymin=bot, ymax=top), alpha=0.2, size=0)+
+  geom_line(aes(y=med_smooth), alpha=.5, size=1) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen)+
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1), labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb")))+facet_wrap(~name, ncol=1)+
+geom_text(data = chm13.ovl %>% 
+              ungroup() %>%
+              dplyr::select(ID,name) %>%
+              distinct() %>%
+              group_by(name) %>%
+              summarise(n_genes=n()) %>%
+              distinct() %>%
+              mutate(height=case_when(name == "L1P" ~ 0, 
+                          name == "L1HS" ~ .01, 
+                          TRUE ~ .02)),
+            aes(x=c(2),
+                y=.3+height,
+                label=paste("# repeats =",comma(n_genes))
+                ), hjust=1)+facet_wrap(~name)
+p
+```
+
+```{r}
+
+n_windows=500
+chm13.ovl$cut = cut(chm13.ovl$dist, breaks=n_windows)
+
+chm13.ovl.labs <- chm13.ovl %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+ # filter(quartile != 0) %>%
+  group_by(cut,name) %>%
+ # mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  summarise(med = median(methylated_frequency), top = quantile(methylated_frequency, 0.75), bot = quantile(methylated_frequency, 0.25), n_genes = length(methylated_frequency),name=name) %>%
+  mutate(x_tmp = str_sub(cut, 2, -2)) %>% 
+  separate(x_tmp, c("min", "max"), sep = ",") %>% 
+  mutate_at(c("min", "max"), as.double) %>%
+  ungroup() %>%
+  distinct() %>%
+  group_by(name) %>%
+  arrange(min) %>%
+  mutate(med_smooth = rollmean(med, 20, NA))
+
+
+# 4 is lowest divergence (youngest) 1 is highest divergence (oldest)
+p <- ggplot(chm13.ovl.labs,aes( x = min, y = med_smooth, color =name), alpha=.5)+
+#  geom_smooth(method = "loess", span = 0.12,se = F)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+ # geom_ribbon(aes(ymin=bot, ymax=top), alpha=0.2, size=0)+
+  geom_line(aes(y=med_smooth), alpha=.5, size=1) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen)+
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1), labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb")))+
+geom_text(data = chm13.ovl %>% 
+              ungroup() %>%
+              dplyr::select(ID,name) %>%
+              distinct() %>%
+              group_by(name) %>%
+              summarise(n_genes=n()) %>%
+              distinct() %>%
+              mutate(height=case_when(name == "L1P" ~ 0, 
+                          name == "L1HS" ~ .01, 
+                          TRUE ~ .02)),
+            aes(x=c(2),
+                y=.3+height,
+                label=paste("# repeats =",comma(n_genes))
+                ), hjust=1)
+p
+```
+

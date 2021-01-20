@@ -1,0 +1,689 @@
+---
+title: "Read plots"
+author: "G$"
+date: "9/3/2020"
+output: pdf_document
+---
+
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggpmisc)
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+
+hg002_acc <- readRDS("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/nanonome/methylation_calls/pooled/ChrX_accessibilityZscore.rds")
+
+hg002_meth <- read_csv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_CpGmethylation_ByCall.csv")
+
+hg002_meth.gr <- hg002_meth %>%
+  group_by(chrom, start, end) %>%
+  summarise(called_sites_methylated = sum(mcall == 1), called_sites_unmethylated = sum(mcall == 0), called_sites =called_sites_methylated+ called_sites_unmethylated, methylated_frequency =(called_sites_methylated/called_sites)) %>%
+  GRanges()
+
+hg002_gc <- read_csv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_GpCmethylation_ByCall.csv")
+
+hg002_gc.gr <- hg002_gc %>%
+  group_by(chrom, start, end) %>%
+  summarise(called_sites_methylated = sum(mcall == 1), called_sites_unmethylated = sum(mcall == 0), called_sites =called_sites_methylated+ called_sites_unmethylated, methylated_frequency =(called_sites_methylated/called_sites)) %>%
+  GRanges()
+
+
+rm <- read_tsv(paste0(dat, "/HG002/annotations/HG002_v0.9.orf_only.bed"), col_names = c("chr", "start", "end", "name", "len","direction")) %>%
+  mutate(ID = row_number())%>%
+  GRanges()
+  
+```
+
+
+```{r}
+chr="chrX"
+ library(BSgenome.HG002.chrX)
+chrx.gr <- GRanges(seqinfo(BSgenome.HG002.chrX))
+
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 15000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+  binnedMean <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewMeans(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+  
+
+
+chr.meth <- hg002_meth.gr[seqnames(hg002_meth.gr) == chr]
+    
+
+  score1 <- coverage(chr.meth, weight="called_sites_methylated")
+  score2 <- coverage(chr.meth, weight="called_sites_unmethylated")
+  score3 <- coverage(chr.meth, weight="called_sites")
+  
+  
+  binned_meth <- binnedSum(blocks, numvar = score1, "called_sites_methylated") %>%
+    as.data.frame()
+  binned_unmeth <-binnedSum(blocks, numvar = score2, "called_sites_unmethylated")%>%
+    as.data.frame()
+  binned_cov <- binnedMean(blocks, numvar = score3, "num_motifs_in_group") %>%
+    as.data.frame()
+  
+
+  
+hg002_meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames", "width", "strand")) %>%
+  merge(binned_cov, by = c("start", "end", "seqnames", "width", "strand")) %>%
+    filter(seqnames == chr) %>%
+    group_by(start, end) %>%
+    mutate(sites = called_sites_methylated+called_sites_unmethylated) %>%
+    mutate(freq = called_sites_methylated/sites) %>%
+    ungroup()
+
+freqmean=mean(hg002_meth_bins$freq)
+freqsd=sd(hg002_meth_bins$freq)
+
+hg002_meth_bins <- hg002_meth_bins %>%
+  mutate(z_score = (freq - freqmean) / freqsd) %>%
+  mutate(color = case_when(z_score > 0 ~ "Methylated", 
+                           TRUE ~ "Unmethylated")) 
+
+meth <- ggplot(hg002_meth_bins, aes(x = start, y =freq ))+theme_classic()+geom_histogram(stat = "identity", position = "dodge")
+
+```
+
+
+```{r}
+
+
+rm <- read_tsv(paste0(dat, "/HG002/annotations/HG002_v0.9.orf_only.bed"), col_names = c("chr", "start", "end", "name", "len","direction")) %>%
+  mutate(ID = row_number())%>%
+  GRanges()
+
+chr="chrX"
+ library(BSgenome.HG002.chrX)
+chrx.gr <- GRanges(seqinfo(BSgenome.HG002.chrX))
+
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 15000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+
+  
+rm <- as.data.frame(rm) %>%
+  filter(seqnames == "chrX") %>%
+  mutate(num =1) %>%
+  GRanges()
+
+chr.genes <- rm[seqnames(rm) == chr]
+    
+seqlevels(chr.genes) <- "chrX"
+score1 <- coverage(chr.genes, weight="num")
+
+  
+binned_genes <- binnedSum(blocks, numvar = score1, "num") %>%
+    as.data.frame()
+
+genes <- ggplot(binned_genes, aes(x = start, y =num ))+theme_classic()+geom_histogram(stat = "identity", position = "dodge")+scale_y_log10()
+
+```
+
+```{r}
+list=c("Satellite", "Simple_repeat")
+rm <- read_tsv(paste0(dat, "/HG002/annotations/hg002.chrX.fasta_rm.bed"), col_names = c("chr", "start", "end", "name", "len","direction", "rep_family", "rep_class")) %>%
+  mutate(ID = row_number())%>%
+  filter(rep_family %in% list) %>%
+  GRanges()
+
+chr="chrX"
+ library(BSgenome.HG002.chrX)
+chrx.gr <- GRanges(seqinfo(BSgenome.HG002.chrX))
+
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 15000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+
+  
+rm <- as.data.frame(rm) %>%
+  filter(seqnames == "chrX") %>%
+  mutate(num =1) %>%
+  GRanges()
+
+chr.genes <- rm[seqnames(rm) == chr]
+    
+seqlevels(chr.genes) <- "chrX"
+score1 <- coverage(chr.genes, weight="num")
+
+  
+binned_genes <- binnedSum(blocks, numvar = score1, "num") %>%
+    as.data.frame()
+
+sat <- ggplot(binned_genes, aes(x = start, y =num))+theme_classic()+geom_histogram(stat = "identity", position = "dodge")
+
+plot_grid(gc, sat,genes, align = "v", ncol=1)
+
+```
+
+```{r}
+
+rm <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/hg002_chrX_RM_COV_CpCGPC.tsv")) %>%
+  mutate(ID = row_number())%>%
+  mutate(rep_end=rep_start) %>%
+  filter(rep_fam == "SINE/Alu") %>%
+  GRanges()
+
+chr="chrX"
+ library(BSgenome.HG002.chrX)
+chrx.gr <- GRanges(seqinfo(BSgenome.HG002.chrX))
+
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 15000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+
+  
+rm <- as.data.frame(rm) %>%
+  filter(seqnames == "chrX") %>%
+  mutate(num =1) %>%
+  GRanges()
+
+chr.genes <- rm[seqnames(rm) == chr]
+    
+seqlevels(chr.genes) <- "chrX"
+score1 <- coverage(chr.genes, weight="num")
+score2 <- coverage(chr.genes, weight="cov")
+
+  
+binned_genes <- binnedSum(blocks, numvar = score1, "num") %>%
+    as.data.frame() %>%
+  select(c(num))
+binned_cov <- binnedSum(blocks, numvar = score2, "cov") %>%
+    as.data.frame()
+binned.alu <- cbind(binned_cov, binned_genes) %>%
+  mutate(mean=mean(cov)) %>%
+  mutate(sd = sd(cov)) %>%
+  mutate(z_score = (cov-mean)/sd)
+
+sine <- ggplot(binned.alu, aes(x = start, y =num, fill=log10(cov)))+theme_classic()+geom_histogram(stat = "identity", position = "dodge")+scale_fill_gradient(low = "yellow", high = "red", na.value = NA)
+sine
+#plot_grid(gc, sat,genes,sine, align = "v", ncol=1)
+
+```
+
+
+```{r}
+
+rm <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/hg002_chrX_RM_COV_CpCGPC.tsv")) %>%
+  mutate(ID = row_number())%>%
+  mutate(rep_end=rep_start) %>%
+  filter(rep_fam == "LINE/L1") %>%
+  filter(rep_type == "L1HS") %>%
+# replace(cov = 0, NA) %>%
+  GRanges()
+
+
+chr="chrX"
+ library(BSgenome.HG002.chrX)
+chrx.gr <- GRanges(seqinfo(BSgenome.HG002.chrX))
+
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 15000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+
+  
+rm <- as.data.frame(rm) %>%
+  filter(seqnames == "chrX") %>%
+  mutate(num =1) %>%
+  GRanges()
+
+chr.genes <- rm[seqnames(rm) == chr]
+    
+seqlevels(chr.genes) <- "chrX"
+score1 <- coverage(chr.genes, weight="num")
+score2 <- coverage(chr.genes, weight="cov")
+
+  
+binned_genes <- binnedSum(blocks, numvar = score1, "num") %>%
+    as.data.frame() %>%
+  dplyr::select(c(num))
+binned_cov <- binnedSum(blocks, numvar = score2, "cov") %>%
+    as.data.frame()
+binned.alu <- cbind(binned_cov, binned_genes) %>%
+  mutate(mean=mean(cov)) %>%
+  mutate(sd = sd(cov)) %>%
+  mutate(z_score = (cov-mean)/sd)
+
+
+line <- ggplot(binned.alu, aes(x = start, y =num, fill=log10(cov)))+theme_classic()+geom_histogram(stat = "identity", position = "dodge")+scale_fill_gradient(low = "yellow", high = "red", na.value = NA)
+
+line
+#plot <- plot_grid(gc, sat,genes,sine, line, align = "v", ncol=1)
+plot <- plot_grid(sine, line, align = "v", ncol=1)
+
+ggsave(filename = paste0(figs, "/HG002_chrX_allwithExpL1HS.pdf"), plot = line,
+ height = 8, width = 12)
+
+```
+
+
+```{r}
+
+rm <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/chm13_chrXfromWG_RM_COV_CpC.tsv")) %>%
+  mutate(ID = row_number())%>%
+  mutate(rep_end=rep_start) %>%
+  filter(rep_fam == "LINE/L1") %>%
+# replace(cov = 0, NA) %>%
+  GRanges()
+
+
+chr="chrX"
+ library(BSgenome.t2t.v1.0.release)
+chrx.gr <- GRanges(seqinfo(BSgenome.t2t.v1.0.release))
+
+
+blocks <- genomeBlocks(BSgenome.t2t.v1.0.release, chrs = seqnames(BSgenome.t2t.v1.0.release), width = 15000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+
+  
+rm <- as.data.frame(rm) %>%
+  filter(seqnames == "chrX") %>%
+  mutate(num =1) %>%
+  GRanges()
+
+chr.genes <- rm[seqnames(rm) == chr]
+blocks <- blocks[seqnames(blocks) == chr]  
+seqlevels(blocks) <- "chrX"
+seqlevels(chr.genes) <- "chrX"
+
+
+
+score1 <- coverage(rm, weight="num")
+score2 <- coverage(rm, weight="cov")
+
+  
+binned_genes <- binnedSum(blocks, numvar = score1, "num") %>%
+    as.data.frame() %>%
+  select(c(num))
+binned_cov <- binnedSum(blocks, numvar = score2, "cov") %>%
+    as.data.frame()
+binned.alu <- cbind(binned_cov, binned_genes) %>%
+  mutate(mean=mean(cov)) %>%
+  mutate(sd = sd(cov)) %>%
+  mutate(z_score = (cov-mean)/sd)
+WG.l1 <- binned.alu
+line <- ggplot(binned.alu, aes(x = start, y =num, fill=log10(cov)))+theme_classic()+geom_histogram(stat = "identity", position = "dodge")+scale_fill_gradient(low = "yellow", high = "red", na.value = NA)
+
+line
+
+```
+
+```{r}
+
+rm <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/chm13_chrXfromWG_RM_COV_CpC.tsv")) %>%
+  mutate(ID = row_number())%>%
+  mutate(rep_end=rep_start) %>%
+  filter(rep_fam == "SINE/Alu") %>%
+# replace(cov = 0, NA) %>%
+  GRanges()
+
+
+chr="chrX"
+ library(BSgenome.t2t.v1.0.release)
+chrx.gr <- GRanges(seqinfo(BSgenome.t2t.v1.0.release))
+
+
+blocks <- genomeBlocks(BSgenome.t2t.v1.0.release, chrs = seqnames(BSgenome.t2t.v1.0.release), width = 15000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+
+  
+rm <- as.data.frame(rm) %>%
+  filter(seqnames == "chrX") %>%
+  mutate(num =1) %>%
+  GRanges()
+
+chr.genes <- rm[seqnames(rm) == chr]
+blocks <- blocks[seqnames(blocks) == chr]  
+seqlevels(blocks) <- "chrX"
+seqlevels(chr.genes) <- "chrX"
+score1 <- coverage(rm, weight="num")
+score2 <- coverage(rm, weight="cov")
+
+  
+binned_genes <- binnedSum(blocks, numvar = score1, "num") %>%
+    as.data.frame() %>%
+  select(c(num))
+binned_cov <- binnedSum(blocks, numvar = score2, "cov") %>%
+    as.data.frame()
+binned.alu <- cbind(binned_cov, binned_genes) %>%
+  mutate(mean=mean(cov)) %>%
+  mutate(sd = sd(cov)) %>%
+  mutate(z_score = (cov-mean)/sd)
+WG.alu <- binned.alu
+sine <- ggplot(binned.alu, aes(x = start, y =num, fill=log10(cov)))+theme_classic()+geom_histogram(stat = "identity", position = "dodge")+scale_fill_gradient(low = "yellow", high = "red", na.value = NA)
+
+sine
+#plot <- plot_grid(gc, sat,genes,sine, line, align = "v", ncol=1)
+plot <- plot_grid(sine, line, align = "v", ncol=1)
+
+ggsave(filename = paste0(figs, "/chm13_chrX_allwithExpfromWG.pdf"), plot = plot,
+ height = 8, width = 12)
+
+```
+
+```{r}
+
+rm <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/chm13_chrX_RM_COV_CpC.tsv")) %>%
+  mutate(ID = row_number())%>%
+  mutate(rep_end=rep_start) %>%
+  filter(rep_fam == "LINE/L1") %>%
+  mutate(total_cov=sum(cov)) %>%
+# replace(cov = 0, NA) %>%
+  GRanges()
+
+
+chr="chrX"
+ library(BSgenome.t2t.v1.0.release)
+chrx.gr <- GRanges(seqinfo(BSgenome.t2t.v1.0.release))
+
+
+blocks <- genomeBlocks(BSgenome.t2t.v1.0.release, chrs = seqnames(BSgenome.t2t.v1.0.release), width = 15000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+
+  
+rm <- as.data.frame(rm) %>%
+  filter(seqnames == "chrX") %>%
+  mutate(num =1) %>%
+  GRanges()
+
+chr.genes <- rm[seqnames(rm) == chr]
+blocks <- blocks[seqnames(blocks) == chr]  
+seqlevels(blocks) <- "chrX"
+seqlevels(chr.genes) <- "chrX"
+
+
+
+score1 <- coverage(rm, weight="num")
+score2 <- coverage(rm, weight="cov")
+
+  
+binned_genes <- binnedSum(blocks, numvar = score1, "num") %>%
+    as.data.frame() %>%
+  select(c(num))
+binned_cov <- binnedSum(blocks, numvar = score2, "cov") %>%
+    as.data.frame()
+binned.alu <- cbind(binned_cov, binned_genes) %>%
+  mutate(mean=mean(cov)) %>%
+  mutate(sd = sd(cov)) %>%
+  mutate(z_score = (cov-mean)/sd) 
+justX.l1 <- binned.alu
+line <- ggplot(binned.alu, aes(x = start, y =num, fill=log10(cov)))+theme_classic()+geom_histogram(stat = "identity", position = "dodge")+scale_fill_gradient(low = "yellow", high = "red", na.value = NA)
+
+line
+
+```
+
+```{r}
+
+rm <- read_tsv(paste0(dat, "/TE/rm_v2.0/add_meth/chm13_chrX_RM_COV_CpC.tsv")) %>%
+  mutate(ID = row_number())%>%
+  mutate(rep_end=rep_start) %>%
+  filter(rep_fam == "SINE/Alu") %>%
+# replace(cov = 0, NA) %>%
+  GRanges()
+
+
+chr="chrX"
+ library(BSgenome.t2t.v1.0.release)
+chrx.gr <- GRanges(seqinfo(BSgenome.t2t.v1.0.release))
+
+
+blocks <- genomeBlocks(BSgenome.t2t.v1.0.release, chrs = seqnames(BSgenome.t2t.v1.0.release), width = 15000)
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+
+  
+rm <- as.data.frame(rm) %>%
+  filter(seqnames == "chrX") %>%
+  mutate(num =1) %>%
+  GRanges()
+
+chr.genes <- rm[seqnames(rm) == chr]
+blocks <- blocks[seqnames(blocks) == chr]  
+seqlevels(blocks) <- "chrX"
+seqlevels(chr.genes) <- "chrX"
+score1 <- coverage(rm, weight="num")
+score2 <- coverage(rm, weight="cov")
+
+  
+binned_genes <- binnedSum(blocks, numvar = score1, "num") %>%
+    as.data.frame() %>%
+  select(c(num))
+binned_cov <- binnedSum(blocks, numvar = score2, "cov") %>%
+    as.data.frame()
+binned.alu <- cbind(binned_cov, binned_genes) %>%
+  mutate(mean=mean(cov)) %>%
+  mutate(sd = sd(cov)) %>%
+  mutate(z_score = (cov-mean)/sd)
+
+justX.alu <- binned.alu
+
+sine <- ggplot(binned.alu, aes(x = start, y =num, fill=log10(cov)))+theme_classic()+geom_histogram(stat = "identity", position = "dodge")+scale_fill_gradient(low = "yellow", high = "red", na.value = NA)
+
+sine
+#plot <- plot_grid(gc, sat,genes,sine, line, align = "v", ncol=1)
+plot <- plot_grid(sine, line, align = "v", ncol=1)
+
+ggsave(filename = paste0(figs, "/chm13_chrX_allwithExp.pdf"), plot = plot,
+ height = 8, width = 12)
+
+```
+
+```{r}
+justX.alu <- justX.alu %>%
+  mutate(mapping = "justX") %>%
+  rename(z_score = "cov.justx") %>%
+  select(c(cov.justx))
+
+justX.l1 <- justX.l1 %>%
+  mutate(mapping = "justX") %>%
+  rename(z_score = "cov.justx") %>%
+  select(c(cov.justx))
+
+WG.alu <- WG.alu %>%
+  rename(z_score = "cov.WG")
+
+WG.l1 <- WG.l1 %>%
+  rename(z_score = "cov.WG")
+
+
+alu.compare <- cbind(justX.alu,WG.alu)%>%
+  select(start, end, cov.justx, cov.WG) 
+
+l1.compare <- cbind(justX.l1,WG.l1) %>%
+  select(start, end, cov.justx, cov.WG) 
+fit1 <- lm(cov.justx ~ cov.WG, data = alu.compare)
+summary(fit1)
+pal <- wes_palette("Zissou1", 21, type = "continuous")
+ggplot(alu.compare, aes(x = (cov.justx), y = (cov.WG)))+geom_point()+theme_classic()+scale_y_log10()+scale_x_log10()+
+  labs(title = paste("Adj R2 = ",signif(summary(fit1)$adj.r.squared, 5),
+                     "Intercept =",signif(fit1$coef[[1]],5 ),
+                     " Slope =",signif(fit1$coef[[2]], 5),
+                     " P =",signif(summary(fit1)$coef[2,4], 5)))+stat_smooth(method = "lm", col = "red")
+
+fit1 <- lm(cov.justx ~ cov.WG, data = l1.compare)
+summary(fit1)
+pal <- wes_palette("Zissou1", 21, type = "continuous")
+ggplot(l1.compare, aes(x = (cov.justx), y = (cov.WG)))+geom_point()+theme_classic()+scale_y_log10()+scale_x_log10()+
+  labs(title = paste("Adj R2 = ",signif(summary(fit1)$adj.r.squared, 5),
+                     "Intercept =",signif(fit1$coef[[1]],5 ),
+                     " Slope =",signif(fit1$coef[[2]], 5),
+                     " P =",signif(summary(fit1)$coef[2,4], 5)))+stat_smooth(method = "lm", col = "red")
+```
+

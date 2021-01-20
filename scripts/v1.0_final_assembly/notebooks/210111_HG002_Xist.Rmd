@@ -24,10 +24,126 @@ library(mclust)
 figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/allele_specific_meth/xist"
 dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
 
+x <- read_tsv(paste0(dat, "/TE/rm_v2.0/hg002_k51_chrX_single-mrg_meryl.over.HG002_RNAseq_SRR13086640_cutadapt-m100_bt2-N0-k100-HG002-chrX_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) 
 ```
 
 ```{r}
-hg002.rep <- read_tsv(paste0(dat, "/TE/rm_v2.0/hg002_k51_chrX_single-mrg_meryl.over.HG002_RNAseq_SRR13086640_cutadapt-m100_bt2-N0-k100-HG002-chrX_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) 
+chr="chrX"
+hg002_meth <- read_csv(paste0(dat, "/HG002/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_CpGmethylation_ByCall.csv")) %>%
+  ungroup() %>%
+  group_by(start) %>%
+  summarise(num_meth = sum(mcall == 1), num_unmeth = sum(mcall == 0)) %>%
+  mutate(chr = "chrX", start = start, end = start) %>%
+  GRanges()
+
+  library(BSgenome.HG002.chrX)
+  
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+  binnedMean <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewMeans(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+  
+
+
+chr.meth <- hg002_meth[seqnames(hg002_meth) == chr]
+    
+  
+  blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 5000)
+  score1 <- coverage(chr.meth, weight="num_meth")
+  score2 <- coverage(chr.meth, weight="num_unmeth")
+#  score3 <- coverage(chr.meth, weight="called_sites")
+  
+  
+  binned_meth <- binnedSum(blocks, numvar = score1, "num_meth") %>%
+    as.data.frame()
+  binned_unmeth <-binnedSum(blocks, numvar = score2, "num_unmeth")%>%
+    as.data.frame()
+ # binned_cov <- binnedMean(blocks, numvar = score3, "num_motifs_in_group") %>%
+  #  as.data.frame()
+  
+
+  
+meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames", "width", "strand")) %>%
+  #merge(binned_cov, by = c("start", "end", "seqnames", "width", "strand")) %>%
+    filter(seqnames == chr) %>%
+   # filter(start > rstart) %>%
+  #  filter(end < rend) %>%
+    group_by(start, end) %>%
+    mutate(sites = num_meth+num_unmeth) %>%
+    mutate(freq = num_meth/sites) %>%
+    ungroup() %>%
+    mutate(smooth = rollmean(freq, 3, fill = NA), fill = NA) 
+```
+
+```{r bis, echo=F}
+rstart=69772060-20000
+rend=71174704+20000
+meth <- ggplot(meth_bins, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(x="Genomic coordinates (Mb)", y="Methylation")+theme_classic(base_size = 25)+ylim(0,1)+xlim(rstart/1e6,rend/1e6)
+
+list=c("L1HS","L1P")
+L1 <- x %>%
+  filter(rep_fam == "LINE/L1") %>%
+  mutate(name = ifelse(grepl("L1HS", rep_type), "L1HS", rep_type)) %>%
+  mutate(name = ifelse(grepl("L1P", rep_type), "L1P", name)) %>%
+  mutate(name = ifelse(grepl("L1M", rep_type), "L1M", name)) %>%
+  filter(name %in% list) %>%
+  group_by(name) %>%
+  mutate(quartile = ntile(cov, 4)) %>%
+  filter(chr == chr) %>%
+  filter(start > rstart) %>%
+  filter(end < rend) %>%
+  filter(end-start > 5000)
+
+rep_leg2 <- ggplot(data=L1, mapping=aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1, fill = name))+
+  geom_rect()+theme(legend.position="top") +labs(y="Axis")+xlim(rstart/1e6,rend/1e6) +labs(y="Axis")+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank())# +  theme_void()
+
+
+top_row <- plot_grid(rep_leg2,meth, ncol = 1, align="v", rel_heights = c(1/4, 1/2))
+top_row
+
+
+ggsave(
+  paste0(figs, "/", chr, "HG002_XIC_methyl_pattern.pdf"),
+  plot = top_row,
+  scale = 1,
+  width = 12,
+  height = 6,
+)
+
+```
+
+```{r}
+
+cgcalls <- read_csv(paste0(dat, "/HG002/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_CpGmethylation_ByCall.csv"))
 region_start=70380382-10000
 region_end= 70412484+50000
 reg = cgcalls %>%
@@ -35,7 +151,7 @@ reg = cgcalls %>%
   dplyr::filter(end <= region_end)
   
 
-cpg_runs <-getRuns(reg, maxGap = 300)
+cpg_runs <-getRuns(reg, maxGap = 150)
  
 
 cpg_runs.ordered <- order_reads(cpg_runs)
@@ -55,11 +171,10 @@ bis <- reg %>%
 
 meth <- ggplot(bis, aes(x = (start/1e6), y= meth_freq))+geom_smooth(size =1, se = F, method = "loess", span = .1)+ylim(0,1)+ theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.y=element_blank(), axis.title.x=element_blank(), panel.spacing = unit(2, "lines"))#+coord_cartesian(xlim=(c(37595000,37600000)))
 
-bis <- hg002.rep %>%
+reps <- x %>%
   filter(start > region_start) %>%
   filter(end < region_end)
-
-L1 <- ggplot(bis, aes(xmin = start, xmax = end, ymin=0, ymax=.1,fill = rep_fam))+geom_rect()+ theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+theme(legend.position = "bottom")
+L1.plot <- ggplot(reps, aes(xmin = start, xmax = end, ymin=0, ymax=.1,fill = rep_type))+geom_rect()+ theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+coord_cartesian(xlim=c(region_start, region_end))+theme(legend.position = "bottom")
 
 
 g <- ggplot(cpg_runs,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
@@ -67,7 +182,7 @@ g <- ggplot(cpg_runs,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) + 
 #    geom_vline(xintercept = 127638255, linetype == "dashed") +
     scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(),  legend.position= "bottom",axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+geom_vline(xintercept = c(70380382,70412484), linetype = "dotted")
 
-top_row <- plot_grid(g, L1,align="v", ncol=1,rel_heights = c(1/2, 1/4))
+top_row <- plot_grid(g, L1.plot,align="v", ncol=1,rel_heights = c(1/2, 1/4))
 top_row
 
 ggsave(
