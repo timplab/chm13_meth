@@ -150,7 +150,7 @@ rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
 r <- rf(32)
 
 c <- cor(cov.alu$cov_k10, cov.alu$cov_WG)
-title <- sprintf("Alu only N = %d r = %.3f", nrow(cov.all), c)
+title <- sprintf("Alu only N = %d r = %.3f", nrow(cov.alu), c)
 ggplot(cov.alu, aes(log10(cov_k10), log10(cov_WG))) +
     geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
     xlab("K10") +
@@ -168,7 +168,7 @@ rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
 r <- rf(32)
 
 c <- cor(cov.line$cov_k10, cov.line$cov_WG)
-title <- sprintf("L1 only N = %d r = %.3f", nrow(cov.all), c)
+title <- sprintf("L1 only N = %d r = %.3f", nrow(cov.line), c)
 ggplot(cov.line, aes(log10(cov_k10), log10(cov_WG))) +
     geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
     xlab("K10") +
