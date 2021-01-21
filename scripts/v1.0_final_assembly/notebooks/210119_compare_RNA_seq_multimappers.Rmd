@@ -11,9 +11,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # tidyverse should have everything you need for plotting and parsing, don't load tidyverse and plyr at the same time unless u want all hell to break loose and ur life to be an epic cluster fuck
 library(tidyverse)
+library(RColorBrewer)
 ```
 
-```{r load data, include=F}
+```{r load_data, include=F}
 
 # put in path to directory where data is
 
@@ -24,37 +25,38 @@ dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/TE/210119_mu
 k10 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k10_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) %>%
   filter(start > 1929208-1)%>%
   mutate(ID = row_number()) %>%
-  rename(cov = "cov_k10") %>%
-  dplyr::select(c(cov_k10))
+  #dplyr::rename(cov = "cov_k10") %>%
+  dplyr::select(cov_k10 = cov) #%>%
+ # dplyr::select(c(cov_k10))
 
 k50 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k50_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov"))%>%
   filter(start > 1929208-1) %>%
   mutate(ID = row_number()) %>%
-  rename(cov = "cov_k50") %>%
-  dplyr::select(c(cov_k50))
+  dplyr::select(cov_k50 = cov)
+
 
 k100 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k100_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) %>%
   filter(start > 1929208-1) %>%
   mutate(ID = row_number()) %>%
-  rename(cov = "cov_k100") %>%
-  dplyr::select(c(cov_k100))
+  #rename(cov = "cov_k100") %>%
+  dplyr::select(cov_k100 = cov)
 
 k200 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k200_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) %>%
   filter(start > 1929208-1) %>%
   mutate(ID = row_number()) %>%
-  rename(cov = "cov_k200") %>%
-  dplyr::select(c(cov_k200))
+  #rename(cov = "cov_k200") %>%
+  dplyr::select(cov_k200 = cov)
 
 k1000 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k1000_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov"))  %>%
   filter(start > 1929208-1) %>%
   mutate(ID = row_number()) %>%
-  rename(cov = "cov_k1000") %>%
-  dplyr::select(c(cov_k1000))
+  #rename(cov = "cov_k1000") %>%
+  dplyr::select(cov_k1000 = cov)
 
 # I have this file in another directory called "chm13_whole_genome" make sure to fix this path to find yours 
 WG <- read_tsv(paste0(dat,"/chm13_whole_genome/chrX-PARremoved_chm13_k51_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k100_chm13-20200922_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov"))  %>%
   mutate(ID = row_number()) %>%
-  rename(cov = "cov_WG") 
+  dplyr::select(cov_WG = cov, everything())
 
 
 # you can write this to a tsv so u don't have to load all the data every time 
