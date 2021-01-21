@@ -6,12 +6,21 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
+# you'll want knitr package, it helps customize the chunks 
 knitr::opts_chunk$set(echo = TRUE)
+
+# tidyverse should have everything you need for plotting and parsing, don't load tidyverse and plyr at the same time unless u want all hell to break loose and ur life to be an epic cluster fuck
+library(tidyverse)
 ```
 
-```{r}
+```{r load data, include=F}
+
+# put in path to directory where data is
+
 dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/TE/210119_multimap_test"
 
+
+# load all the data
 k10 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k10_chm13-chrX-maskedPAR_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov")) %>%
   filter(start > 1929208-1)%>%
   mutate(ID = row_number()) %>%
@@ -42,23 +51,41 @@ k1000 <- read_tsv(paste0(dat,"/chm13_k51_chrX_maskedPAR_single-mrg_meryl.over.CH
   rename(cov = "cov_k1000") %>%
   dplyr::select(c(cov_k1000))
 
+# I have this file in another directory called "chm13_whole_genome" make sure to fix this path to find yours 
 WG <- read_tsv(paste0(dat,"/chm13_whole_genome/chrX-PARremoved_chm13_k51_single-mrg_meryl.over.CHM13_1_S182_RNAseq_cutadapt-m100_bt2-N0-k100_chm13-20200922_COV_RM.bed"), col_names = c("chr", "start", "end", "len", "comp", "rep_type", "rep_fam", "col8", "col9", "col10", "col11", "SW", "perc_sub", "del", "ins", "cov", "num_depth", "len", "per_cov"))  %>%
   mutate(ID = row_number()) %>%
   rename(cov = "cov_WG") 
 
+
+# you can write this to a tsv so u don't have to load all the data every time 
 cov.all <- cbind(k10,k50,k100,k200,k1000,WG)
+cov.alu <- cov.all %>%
+  filter(rep_fam == "SINE/Alu")
+cov.line <- cov.all %>%
+  filter(rep_fam == "LINE/L1")
 ```
 
 
-```{r pressure, echo=FALSE}
+```{r k10, echo=FALSE}
+
+# make pretty colors
 rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
 r <- rf(32)
 
+# fit a line with "lm", check out summary
+
 summary(lm(cov_k10~ cov_WG, data=cov.all))
+
+# cor function is giving better R-squared values, idk why but I went with that one
+# run cor to generated R2 and use it as title for the plot 
 c <- cor(cov.all$cov_k10, cov.all$cov_WG)
 title <- sprintf("N = %d r = %.3f", nrow(cov.all), c)
+
+# ggplot for plotting, geom_bin2d looks nice, u can also plot as a scatter with geom_point() and adjust the alpha value to avoid overplotting
+
 ggplot(cov.all, aes(log10(cov_k10), log10(cov_WG))) +
-    geom_bin2d(bins=50) + scale_fill_gradientn(colors=r, trans="log10") +
+    geom_bin2d(bins=50)+  # can adjust bin size 
+    scale_fill_gradientn(colors=r, trans="log10") +
     xlab("K10") +
     ylab("WG") +
     theme_bw(base_size=20) +
@@ -66,7 +93,7 @@ ggplot(cov.all, aes(log10(cov_k10), log10(cov_WG))) +
 
 ```
 
-```{r pressure, echo=FALSE}
+```{r k50, echo=FALSE}
 rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
 r <- rf(32)
 
@@ -81,7 +108,7 @@ ggplot(cov.all, aes(log10(cov_k50), log10(cov_WG))) +
 
 
 ```
-```{r pressure, echo=FALSE}
+```{r k100, echo=FALSE}
 rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
 r <- rf(32)
 
@@ -97,19 +124,17 @@ ggplot(cov.all, aes(log10(cov_k100), log10(cov_WG))) +
 
 ```
 
-```{r pressure, echo=FALSE}
-cov.alu <- cov.all %>%
-  filter(rep_fam == "SINE/Alu")
+```{r k200, echo=FALSE}
 
 
 rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
 r <- rf(32)
 
-c <- cor(cov.alu$cov_k50, cov.alu$cov_WG)
-title <- sprintf("N = %d r = %.3f", nrow(cov.alu), c)
-ggplot(cov.alu, aes(log10(cov_k50), log10(cov_WG))) +
-    geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
-    xlab("K50") +
+c <- cor(cov.all$cov_k200, cov.all$cov_WG)
+title <- sprintf("N = %d r = %.3f", nrow(cov.all), c)
+ggplot(cov.all, aes(log10(cov_k200), log10(cov_WG))) +
+    geom_bin2d(bins=50) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("K200") +
     ylab("WG") +
     theme_bw(base_size=20) +
     ggtitle(title)
@@ -117,38 +142,13 @@ ggplot(cov.alu, aes(log10(cov_k50), log10(cov_WG))) +
 ```
 
 
-```{r pressure, echo=FALSE}
-
-rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
-r <- rf(32)
-
-c <- cor(cov.alu$cov_k100, cov.alu$cov_WG)
-title <- sprintf("N = %d r = %.3f", nrow(cov.alu), c)
-ggplot(cov.alu, aes(log10(cov_k100), log10(cov_WG))) +
-    geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
-    xlab("K100") +
-    ylab("WG") +
-    theme_bw(base_size=20) +
-    ggtitle(title)
-
-ggplot(cov.alu, aes(cov_k100, cov_WG)) +
-    geom_point()+
-    xlab("K100") +
-    ylab("WG") +
-    theme_bw(base_size=20) +
-    ggtitle(title) +
-    scale_x_log10()+scale_y_log10()
-
-```
-
-
-```{r pressure, echo=FALSE}
+```{r alu, echo=FALSE}
 
 rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
 r <- rf(32)
 
 c <- cor(cov.alu$cov_k10, cov.alu$cov_WG)
-title <- sprintf("N = %d r = %.3f", nrow(cov.alu), c)
+title <- sprintf("Alu only N = %d r = %.3f", nrow(cov.all), c)
 ggplot(cov.alu, aes(log10(cov_k10), log10(cov_WG))) +
     geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
     xlab("K10") +
@@ -156,21 +156,20 @@ ggplot(cov.alu, aes(log10(cov_k10), log10(cov_WG))) +
     theme_bw(base_size=20) +
     ggtitle(title)
 
+
 ```
 
-```{r pressure, echo=FALSE}
-cov.alu <- cov.all %>%
-  filter(rep_fam == "LINE/L1")
 
+```{r line, echo=FALSE}
 
 rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
 r <- rf(32)
 
-c <- cor(cov.alu$cov_k50, cov.alu$cov_WG)
-title <- sprintf("N = %d r = %.3f", nrow(cov.alu), c)
-ggplot(cov.alu, aes(log10(cov_k50), log10(cov_WG))) +
+c <- cor(cov.line$cov_k10, cov.line$cov_WG)
+title <- sprintf("L1 only N = %d r = %.3f", nrow(cov.all), c)
+ggplot(cov.line, aes(log10(cov_k10), log10(cov_WG))) +
     geom_bin2d(bins=100) + scale_fill_gradientn(colors=r, trans="log10") +
-    xlab("K50") +
+    xlab("K10") +
     ylab("WG") +
     theme_bw(base_size=20) +
     ggtitle(title)
