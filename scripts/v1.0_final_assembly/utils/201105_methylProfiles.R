@@ -11,10 +11,9 @@ options(scipen=999)
 library(zoo)
 library(BSgenome.t2t.v1.0.release)
 options(knitr.duplicate.label = 'allow')
-source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+source("~/projects/chm13_meth/scripts/v1.0_final_assembly/utils/ilee_plot_utils.R")
 library("ggsci")
-source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
-
+source("~/projects/chm13_meth/scripts/v1.0_final_assembly/utils/methylation_R_utils.R")
 # set data output path
 
 figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
