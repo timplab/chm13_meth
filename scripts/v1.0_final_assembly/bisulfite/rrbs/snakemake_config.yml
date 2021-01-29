@@ -1,0 +1,4 @@
+workdir:  # path to datadir, outputs will go in dirs in datadir
+codedir: /home/gmoney/projects/chm13_meth/scripts/v1.0_final_assembly/bisulfitei/rrbs # path to this dir
+reference: /kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/reference/chm13.draft_v1.0.fasta # path to reference genome
+threads: 60 # available cores
