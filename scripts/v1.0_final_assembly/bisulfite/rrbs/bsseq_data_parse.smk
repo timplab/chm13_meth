@@ -60,7 +60,7 @@ rule methylation_extract:
          bsrefdir = config['workdir']+"/Bisulfite_Genome",
    params:
          outdir = config['workdir']+"/bsseq/bismark/CpGcalls"
-   shell: """{repo}/bismark_methylation_extractor -s --comprehensive --merge_non_CpG -o {params.outdir} --bedGraph --remove_spaces --CX --cytosine_report --genome_folder {input.bsrefdir} {input.bam}
+   shell: """[ -e {params.outdir} ]||mkdir -p {params.outdir} && {repo}/bismark_methylation_extractor -s --comprehensive --merge_non_CpG -o {params.outdir} --bedGraph --remove_spaces --CX --cytosine_report --genome_folder {input.bsrefdir} {input.bam}
    """
 
 
