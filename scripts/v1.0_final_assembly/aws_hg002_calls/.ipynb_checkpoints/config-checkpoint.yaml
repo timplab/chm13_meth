@@ -1,0 +1,10 @@
+nanopolish: /home/isac/Software/nanopolish
+minimap2: /usr/local/bin/minimap2 
+nanopore-methylation-utilities: /home/gmoney/repos/nanopore-methylation-utilities
+reference: /kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/reference/chm13.draft_v1.0.fasta
+out: /pym/Data/Nanopore/hg002_fast5 
+fastqdir: /pym/Data/Nanopore/hg002_fast5/fastq
+fast5: /pym/Data/Nanopore/hg002_fast5
+f5c: /home/gmoney/repos/f5c-v0.5/f5c_x86_64_linux 
+winnowmap: /home/gmoney/repos/Winnowmap-2.0/bin
+cores: 12
