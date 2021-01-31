@@ -1,12 +1,13 @@
 ##Software to install
-nanopolish: ${HOME}/nanopolish
-f5c: ${HOME}/f5c-v0.5/f5c_x86_64_linux 
-winnowmap: ${HOME}/Winnowmap-2.0/bin
-nanopore-methylation-utilities: ${HOME}/nanopore-methylation-utilities
+nanopolish: $HOME/nanopolish
+winnowmap: $HOME/Winnowmap-2.0/bin
+nanopore-methylation-utilities: $HOME/nanopore-methylation-utilities
 ##References
 #Must download
-chm13-ref: ${HOME}/ref/chm13.draft_v1.0.fasta
-hg002-ref: ${HOME}/ref/hg002.fasta
+chm13-ref: &chm13 $HOME/ref/chm13.fasta
+hg002-ref: $HOME/ref/HG002.fasta
+ref: chm13-ref
+base: /data
 #out: /pym/Data/Nanopore/hg002_fast5 
 #fastqdir: /pym/Data/Nanopore/hg002_fast5/fastq
 #fast5: /pym/Data/Nanopore/hg002_fast5

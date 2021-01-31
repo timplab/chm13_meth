@@ -1,4 +1,3 @@
-#!/home/timp/miniconda3/bin/snakemake --snakefile
 """
 This Snakemake pipeline is intended to absorb HG002 pangenome sequencing data and methylation call it on AWS.  Based on Ariel's original snakemake
     * Aligns to the reference genome with winnowmap
@@ -10,6 +9,8 @@ This Snakemake pipeline is intended to absorb HG002 pangenome sequencing data an
 configfile: "config.yaml"
 ###-------input paths/files -------###
 
+import glob 
+
 ##WT - note check this to figure out parallelization properly
 ##cores=config["cores"]
 
@@ -17,31 +18,41 @@ configfile: "config.yaml"
 nanopolish = config["nanopolish"]
 winnowmap = config["winnowmap"]
 util = config["nanopore-methylation-utilities"]
-f5c = config["f5c"]
 
-
-##Pass in directory we are working in --config base=dir
+##Pass in directory we are working in --config base=dir - default is /data
 base=config["base"]
 ##Pass in which references using --config ref=chm13 or ref=hg002 - default is chm13.
 if config["ref"]=="hg002":
     ref = config["hg002-ref"]
 else:
     ref = config["chm13-ref"]
-
+   
 ###--------------###
 
 ##WT - again way more complicated than necessary. I noted that there is a pattern of GM24385_{0..22} I can use, broken only by {NB}
+##Find the GM24385 and then get the "next" thing after that in split?
+filelist=glob.glob(base+"/*GM24385*gz")
+
+idlist=[]
+for file in filelist:
+    nameparts=file.split("_")
+    idlist.append("GM24385_"+nameparts[nameparts.index("GM24385")+1])
+
+print(idlist)
 
 # ###------- Pipeline Rules -------#####
 ##Ok - this is supposed to basically request the final output, to make life simple
 rule all:
     input:
-        expand( base_out_path + "/meth_calls/{id}_meth.bam", sample1=SAMPLESLONG)
+        expand( base + "/meth_calls/{id}_meth.bam", id=idlist)
+    shell:
+        "echo {base}"
+
 ##Make reference index        
 rule ref_index:
     output:
         ref+".k15.txt"
-    threads: 96
+    threads: 90
     shell:
         """
         {winnowmap}/meryl count threads={threads} k=15 output merylDB {ref}
@@ -57,7 +68,7 @@ rule align:
         refidx=rules.ref_index.output
     output:
         bam = base + "/bam/{id}.bam"
-    threads: 96
+    threads: 90
     message: """Aligning to reference with winnowmap"""
     run:
         ##Find fq block here
@@ -72,10 +83,8 @@ rule nanopolish:
         bam = rules.align.output.bam
     output:
         meth=base + "/meth_calls/{id}_CpG_methylation.tsv"
-    params:
-        DIR = base_out_path + "/meth_calls"
     message: """calling methylation with nanopolish"""
-    threads: 96
+    threads: 90
     run:
         ##Find fq block here
     	shell("{nanopolish}/nanopolish call-methylation -b {input.bam} -r {fq} -g {ref} -q cpg -t {threads} --progress > {output.meth}")
@@ -84,7 +93,7 @@ rule methylbed:
     input:
         tsv = base + "/meth_calls/{id}_CpG_methylation.tsv"
     output:
-        methbed=base + "/meth_calls/{sample1}_CpG_methylation.bed.gz"
+        methbed=base + "/meth_calls/{id}_CpG_methylation.bed.gz"
     message: """format methyl bed"""
     threads: 1
     run:
@@ -100,15 +109,8 @@ rule methylbam:
         tsv = rules.methylbed.output.methbed
     output:
         base + "/meth_calls/{id}_meth.bam"
-    params:
-        DIR = base_out_path + "/meth_calls",
-        file = "{sample1}_CpG_methylation.bed.gz",
-        filt = base_out_path + "/bam/{sample1}_primary.bam",
-        methbam = "{sample1}_meth.bam",
-        ref = ref,
-        cores = cores
     message: """convert bam for methylation"""
-    threads: 96
+    threads: 90
     shell:
         """
         python3 {util}/convert_bam_for_methylation.py -t {threads} --verbose -b {input.bam} \
@@ -116,4 +118,5 @@ rule methylbam:
                 samtools sort -o {output}
         samtools index {output}
         """
+# ###---###
         
