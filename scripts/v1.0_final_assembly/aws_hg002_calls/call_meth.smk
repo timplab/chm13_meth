@@ -41,7 +41,9 @@ for file in filelist:
 print(idlist)
 
 # ###------- Pipeline Rules -------#####
-##Ok - this is supposed to basically request the final output, to make life simple
+
+workdir: "/data"
+
 rule all:
     input:
         expand( base + "/meth_calls/{id}_meth.bam", id=idlist)
@@ -55,23 +57,20 @@ rule ref_index:
     threads: 90
     shell:
         """
-        {winnowmap}/meryl count threads={threads} k=15 output merylDB {ref}
-        {winnowmap}/meryl print greater-than distinct=0.9998 merylDB > {output}
+        {winnowmap}/meryl count threads={threads} k=15 output {ref}.merylDB {ref}
+        {winnowmap}/meryl print greater-than distinct=0.9998 {ref}.merylDB > {output}
         """
 
 ##Align with winnowmap
 rule align:
     input:
-        ##Question about how to "find" fastq
-        ##Ok - it seems to me we don't *need* the fastq as an input paradoxically.  We just need the index as an input and we use the wildcard of the output to find the input?
-        #fastq = fastqpath + "/{id}_Guppy_4.2.2_prom.fastq.gz",
         refidx=rules.ref_index.output
     output:
         bam = base + "/bam/{id}.bam"
     threads: 90
     message: """Aligning to reference with winnowmap"""
     run:
-        ##Find fq block here
+        fq=glob.glob(base+"/*"+wildcards.id+"*fastq.gz")[0]
         shell("{winnowmap}/winnowmap -t {threads} -W {input.refidx} -ax map-ont {ref} {fq} | samtools view -b -u -F 256 | samtools sort -o {output.bam}")
         shell("samtools index {output.bam}")
 
@@ -86,9 +85,10 @@ rule nanopolish:
     message: """calling methylation with nanopolish"""
     threads: 90
     run:
-        ##Find fq block here
+        fq=glob.glob(base+"/*"+wildcards.id+"*fastq.gz")[0]
     	shell("{nanopolish}/nanopolish call-methylation -b {input.bam} -r {fq} -g {ref} -q cpg -t {threads} --progress > {output.meth}")
-    
+
+#isac methylbed code
 rule methylbed:
     input:
         tsv = base + "/meth_calls/{id}_CpG_methylation.tsv"
@@ -97,12 +97,13 @@ rule methylbed:
     message: """format methyl bed"""
     threads: 1
     run:
-        temp=base+"/meth_calls/{id}.tmp"
+        temp=base+"/meth_calls/"+wildcards.id+".tmp"
         shell("python3 {util}/mtsv2bedGraph.py -q cpg -c 1.5 -g {ref} -i {input.tsv} > {temp}")
         shell("sort {temp} -k1,1 -k2,2n | bgzip > {output.methbed}")
         shell("tabix -p bed {output.methbed}")
         shell("rm {temp}")
 
+#isac methylbam code
 rule methylbam:
     input:
         bam = base + "/bam/{id}.bam",
@@ -113,10 +114,10 @@ rule methylbam:
     threads: 90
     shell:
         """
-        python3 {util}/convert_bam_for_methylation.py -t {threads} --verbose -b {input.bam} \
+        python3 {util}/convert_bam_for_methylation.py -t {threads} --windowsize 1000000 --verbose -b {input.bam} \
                -c {input.tsv} -f {ref} |\
-                samtools sort -o {output}
+               samtools sort -o {output}
         samtools index {output}
+    
         """
 # ###---###
-        
