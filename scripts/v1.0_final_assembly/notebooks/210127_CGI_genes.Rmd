@@ -1,0 +1,414 @@
+---
+title: "Untitled"
+author: "G$"
+date: "1/27/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("~/projects/chm13_meth/scripts/v1.0_final_assembly/utils/ilee_plot_utils.R")
+library("ggsci")
+source("~/projects/chm13_meth/scripts/v1.0_final_assembly/utils/methylation_R_utils.R")
+library(tidyverse)
+library(GenomicRanges)
+library(zoo)
+
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+list=c("chr13", "chr14", "chr15", "chr21", "chr22")
+
+```
+
+
+```{r cars}
+chm13_meth <- read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb_split.tsv")) %>%
+  GRanges()
+
+reps <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0.fasta_rm.bed"), col_names = c("chr", "start", "end")) %>%
+  GRanges()
+
+list=c("chr13", "chr14", "chr15", "chr21", "chr22")
+
+cen <- read_tsv(paste0(dat, "/chm13_final_beds/cenRegions.bed"), col_names = c("chr", "start", "end","name"))%>%
+  GRanges()
+
+tpm <- read_tsv(paste0(dat, "/chm13_final_beds/chm13.CATv1.salmonQuant.bed"), col_names = c("chr","start", "end", "transcript", "TPM", "strand", "num2", "num3", "color")) %>%
+  dplyr::select(transcript,TPM)
+
+
+exp <- read_tsv(paste0(dat, "/chm13_final_beds/CHM13.category-colors.bed.gz"), col_names = c("chr","start", "end", "transcript", "score", "strand", "num2", "num3", "color")) %>%
+  mutate(type=case_when(color == "0,100,0" ~ "lncRNA", 
+                        color == "0,0,128" ~ "coding", 
+                        color == "255,0,255" ~ "pseudo", 
+                        color == "218,165,32" ~ "smallRNA", 
+                        color =="138,43,226" ~ "unsure")) 
+
+allexp <- merge(tpm, exp, by = "transcript") %>%
+GRanges()
+
+keepi <- findOverlaps(allexp,cen)
+freq.matched <- allexp[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(cen[subjectHits(keepi)]))
+
+cendat <- as.data.frame(freq.matched)
+
+armdat <- as.data.frame(allexp[-queryHits(keepi)]) %>%
+  mutate(name = "nonCen")
+
+genes <- rbind(cendat,armdat) %>%
+  mutate(direction=strand) %>%
+  group_by(type) %>%
+  mutate(quartile=ntile(TPM,4)) %>%
+#  filter(seqnames %in% list) %>%
+ # filter(type == "pseudo")%>% 
+ # filter(name != "nonCen") %>%
+  ungroup() %>%
+  GRanges()
+
+```
+
+```{r}
+proms <- rbind(cendat,armdat) %>%
+  mutate(direction=strand) %>%
+  group_by(type) %>%
+  mutate(quartile=ntile(TPM,4)) %>%
+  ungroup() %>%
+  mutate(gene_start=start, gene_end=end) %>%
+  mutate(end=gene_start+2000, start=gene_start-2000) %>%
+  GRanges()
+#  filter(seqnames %in% list) %>%
+ # filter(type == "pseudo")%>% 
+ # filter(name != "nonCen") %>%
+  
+
+cgi <- read_tsv(paste0(dat, "/CGI/chm13.draft_v1.0_EMBOSS_CGI.gff"), col_names = c("chr", "prog", "feat", "start", "end")) %>%
+  GRanges()
+
+# remove CGIs that overlap repeats
+keepi <- findOverlaps(cgi,reps)
+cgi <- cgi[-queryHits(keepi)]
+
+keepi <- findOverlaps(cgi,proms)
+proms.cgi <- as.data.frame(proms[subjectHits(keepi)])%>%
+  mutate(cgi = "yes")
+
+proms.nocgi <- as.data.frame(proms[-subjectHits(keepi)]) %>%
+  mutate(cgi = "no")
+
+proms.all <- rbind(proms.cgi,proms.nocgi)
+```
+
+```{r}
+proms.stat <- proms.all %>%
+  mutate(cen=case_when(name == "nonCen" ~ "no", 
+                       TRUE ~ "yes")) %>%
+  group_by(cen, type) %>%
+  mutate(total=n()) %>%
+  filter(cgi == "yes") %>%
+  mutate(numcgi = n()) %>%
+  group_by(cen,type,total) %>%
+  summarise(frac=(numcgi/total)*100) %>%
+  distinct() %>%
+  filter(type == "coding")
+
+ggplot(proms.stat, aes(y=frac, x=name, fill=name))+geom_bar(stat="identity")+ylim(0,100)
+```
+
+
+```{r}
+
+genes.cgi <- as.data.frame(proms.cgi) %>%
+  filter(type=="coding") %>%
+  filter(name!="nonCen") %>%
+  filter(seqnames %in% list)
+
+flankn <- 10000
+
+bodylen <- 1
+l1_regions <- genes.cgi %>%
+  mutate(start = gene_start - flankn, end = gene_end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(chm13_meth, l1_regions)
+genes.ovl <- genes.cgi[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = gene_end - gene_start) 
+
+chm13.ovl <- as.data.frame(chm13_meth[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(direction == "+",start...2 - gene_start, gene_end - start...2),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    ) %>%
+  #mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  ungroup() %>%
+  group_by(dist,type,quartile,name) %>%
+  mutate(med_meth = median(methylated_frequency)) %>%
+  ungroup()
+  
+
+
+n_windows=1000
+chm13.ovl$cut = cut(chm13.ovl$dist, breaks=n_windows)
+
+chm13.ovl.labs <- chm13.ovl %>%
+  group_by(cut,quartile,name,type) %>%
+  summarise(med = median(methylated_frequency), top = quantile(methylated_frequency, 0.75), bot = quantile(methylated_frequency, 0.25), n_genes = length(methylated_frequency),name=name, type=type, quartile=quartile) %>%
+  mutate(x_tmp = str_sub(cut, 2, -2)) %>% 
+  separate(x_tmp, c("min", "max"), sep = ",") %>% 
+  mutate_at(c("min", "max"), as.double) %>%
+  ungroup() %>%
+  distinct() %>%
+  group_by(type,quartile,name) %>%
+  arrange(min) %>%
+  mutate(med_smooth = rollmean(med, 25, NA))
+
+
+p <- ggplot(chm13.ovl.labs,aes( x = min, y = med_smooth, color=as.factor(quartile),fill = as.factor(quartile)))+
+ # geom_smooth(method = "loess", span = 0.2,se = F,alpha=.1)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+  geom_ribbon(aes(ymin=bot, ymax=top), alpha=0.2, size=0)+
+  geom_line(aes(y=med_smooth), alpha=.5, size=1) +
+  geom_point(aes(y=med_smooth), alpha=.5, size=1)+
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen)+
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1), labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb")))+ylim(0,1)+theme(legend.position = "bottom")+facet_wrap(~name)
+#geom_text(data = chm13.ovl %>% 
+#              ungroup() %>%
+#              dplyr::select(Gene.Name,region) %>%
+#              distinct() %>%
+#              group_by(region,Gene.Name) %>%
+#              summarise(n_genes=n()) %>%
+#              distinct() %>%
+#              mutate(height=case_when(region == "CEN" ~ 0, 
+#                          region == "NONCEN" ~ .02, 
+#                          TRUE ~ .04)),
+#            aes(x=c(2),
+#                y=.8+height,
+#                label=paste("# repeats =",comma(n_genes))
+#                ), hjust=1)+facet_wrap(~name)+coord_cartesian(ylim=c(0,1))
+p
+```
+```{r}
+
+#chr22:4,313,700-4,373,443
+chrom="chr22"
+zstart=4313700
+zend=4373443
+
+issues <- read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/chm13_final_beds/chm13_v1.0_lifted.issuesandchm13gaps.bed", col_names = F) %>%
+  dplyr::rename("seqnames"=X1, "start"=X2, "end"=X3) %>%
+  filter(seqnames == chrom) 
+unmapped <- read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/chm13_final_beds/chm13_v1.0_unmapped_byGRCh38.bed", col_names = F) %>%
+  dplyr::rename("seqnames"=X1, "start"=X2, "end"=X3) %>%
+  filter(seqnames == chrom)
+
+transcriptColors =c("coding" = "navy",
+                    "lncRNA"="darkgreen", 
+                    "pseudo" = "#cc3399", 
+                    "smallRNA" = "goldenrod", 
+                    "unsure" = "blueviolet")
+
+
+cat <- paste0(dat, "/chm13_final_beds/CHM13_CAT_all_exons.bed")
+cat.gr <- import(cat)
+exp <- read_tsv(paste0(dat, "/chm13_final_beds/CHM13.category-colors.bed.gz"), col_names = c("chr","start", "end", "name", "TPM", "strand", "num2", "num3", "color")) %>%
+  mutate(type=case_when(color == "0,100,0" ~ "lncRNA", 
+                        color == "0,0,128" ~ "coding", 
+                        color == "255,0,255" ~ "pseudo", 
+                        color == "218,165,32" ~ "smallRNA", 
+                        color =="138,43,226" ~ "unsure")) %>%
+  dplyr::select(c(name, type))
+
+
+cat.sub <- cat.gr[seqnames(cat.gr) == chrom & start(cat.gr) > zstart & end(cat.gr) < zend]
+
+transcript.df <- as.data.frame(cat.sub) %>%
+  group_by(name) %>%
+  summarise(start=min(start), end=max(end)) %>%
+  mutate(y = seq_len(length(unique((as.data.frame(cat.sub))$name))))
+transcript.df <- merge(transcript.df, exp, by = "name")
+
+exon.df <- merge(transcript.df, as.data.frame(cat.sub),by = "name")
+exon.df <- merge(exon.df, exp, by="name")
+
+
+
+
+reads <- tabix_mbed(paste0(dat, "/censat/", chrom, "_cen.mbed"),extcol = "motif",by = "read") 
+#129004453       142241828 
+
+
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+  filter(rlen >= 20000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+reg = cgcalls %>%
+  dplyr::filter(start >= zstart) %>%
+  dplyr::filter(end <= zend)
+
+
+cpg_runs <-getRuns(reg, maxGap = 20)
+
+
+cpg_runs.ordered <- order_reads(cpg_runs)
+
+cpg_runs <- cpg_runs.ordered$x %>%
+  mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+  mutate(mod = "CpG")
+
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+#ids <- order(sapply(seq_along(gcruns.list),function(i){length(unique(gcruns.list$qname))}))
+
+
+bis <- reg %>% 
+  group_by(chrom, start) %>%
+  summarise(meth_freq = mean(mcall), cov = n()) 
+
+meth <- ggplot(bis, aes(x = (start/1e6), y= meth_freq))+geom_smooth(size =1, se = F, method = "loess", span = .1)+ theme(axis.title.x=element_blank(),axis.text.x=element_blank(), axis.ticks.x=element_blank(),axis.line.x = element_blank(),panel.border=element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+scale_y_continuous(breaks=seq(0, 1.50, .50),limits = c(0, 1))+labs(y="Methylation Frequency")+coord_cartesian(xlim=c(zstart/1e6,zend/1e6))
+
+
+g <- ggplot(cpg_runs,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
+  geom_rect(data=cpg_runs,aes(fill = m))+scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(),legend.position= "none",axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+theme(legend.title=element_blank(),panel.border=element_blank())+coord_cartesian(xlim=c(zstart,zend))
+
+plot <- ggplot()+
+  geom_rect(data=transcript.df, mapping=aes(xmin=start/1e6,xmax=end/1e6,ymin=y,ymax=y+.25,fill=type))+theme(legend.position="none")+theme(legend.text=element_text(size=rel(1)))+theme(axis.text.y=element_blank(), axis.ticks.y=element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+geom_rect(exon.df, aes(xmin=start.y/1e6, xmax=end.y/1e6, ymin=y-1, ymax=y+1,fill=type.y))+theme(axis.title.x=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())+scale_fill_manual(values = transcriptColors, drop = FALSE)+theme(legend.title=element_blank(),panel.border=element_blank())+coord_cartesian(xlim=c(zstart/1e6,zend/1e6))
+plot
+
+map.plot <- ggplot()+geom_rect(data=issues, aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1,fill=X4, color="red", alpha=.5, linetype="dashed"))+scale_color_manual(values = censatColors, drop = FALSE)+geom_rect(data=unmapped, aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1,fill="black", color="black", alpha=.2, linetype="dashed"))+theme(legend.title=element_blank()) +theme(axis.text.y=element_blank(), axis.ticks.y=element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+scale_fill_manual(values = repeatColors, drop = FALSE)+theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(),panel.border=element_blank(), legend.position = "none")+coord_cartesian(xlim=c(zstart/1e6,zend/1e6))
+
+
+row <- plot_grid(meth,g,plot, map.plot,align="v", ncol=1,rel_heights = c(1/10,1/2,1/8,1/50))
+row
+
+```
+
+```{r}
+
+sides=c("DJ", "PJ")
+junc <- read_tsv(paste0(dat,"/annotations/AcroCen_annotations.bed"), col_names = c("chr", "start", "end", "region")) %>%
+  mutate(side = ifelse(grepl("DJ", region), "DJ", region)) %>%
+  mutate(side = ifelse(grepl("PJ", region), "PJ", side)) %>%
+  filter(side %in% sides) %>%
+  GRanges()
+
+keepi <- findOverlaps(genes,junc)
+freq.matched <- genes[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(junc[subjectHits(keepi)]))
+
+junc.genes <- as.data.frame(freq.matched) %>%
+  mutate(gene_start=start, gene_end=end) %>%
+  mutate(start=gene_start-2000, end=gene_start+2000) %>%
+  GRanges()
+
+
+keepi <- findOverlaps(cgi,junc.genes)
+junc.cgi <- as.data.frame(junc.genes[subjectHits(keepi)])%>%
+  mutate(cgi = "yes")
+
+junc.nocgi <- as.data.frame(junc.genes[-subjectHits(keepi)]) %>%
+  mutate(cgi = "no")
+junc.all <- rbind(junc.cgi,junc.nocgi)
+
+flankn <- 10000
+
+bodylen <- 1
+l1_regions <- junc.all %>%
+  mutate(start = gene_start - flankn, end = gene_end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(chm13_meth, l1_regions)
+genes.ovl <- junc.all[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = gene_end - gene_start) 
+
+chm13.ovl <- as.data.frame(chm13_meth[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(direction == "+",start...2 - gene_start, gene_end - start...2),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    ) %>%
+  #mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  ungroup()
+  
+
+
+n_windows=800
+chm13.ovl$cut = cut(chm13.ovl$dist, breaks=n_windows)
+
+chm13.ovl.labs <- chm13.ovl %>%
+  group_by(cut,side) %>%
+  summarise(med = median(methylated_frequency), top = quantile(methylated_frequency, 0.75), bot = quantile(methylated_frequency, 0.25), n_genes = length(methylated_frequency),side=side, type=type) %>%
+  mutate(x_tmp = str_sub(cut, 2, -2)) %>% 
+  separate(x_tmp, c("min", "max"), sep = ",") %>% 
+  mutate_at(c("min", "max"), as.double) %>%
+  ungroup() %>%
+  distinct() %>%
+  group_by(side) %>%
+  arrange(min) %>%
+  mutate(med_smooth = rollmean(med, 25, NA))
+
+
+p <- ggplot(chm13.ovl.labs,aes( x = min, y = med_smooth, color=side, fill=side))+
+ # geom_smooth(method = "loess", span = 0.2,se = F,alpha=.1)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+  geom_ribbon(aes(ymin=bot, ymax=top), alpha=0.2, size=0)+
+  geom_line(aes(y=med_smooth), alpha=.5, size=1) +
+  geom_point(aes(y=med_smooth), alpha=.5, size=1)+
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen)+
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1), labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb")))+ylim(0,1)+theme(legend.position = "bottom")
+#geom_text(data = chm13.ovl %>% 
+#              ungroup() %>%
+#              dplyr::select(Gene.Name,region) %>%
+#              distinct() %>%
+#              group_by(region,Gene.Name) %>%
+#              summarise(n_genes=n()) %>%
+#              distinct() %>%
+#              mutate(height=case_when(region == "CEN" ~ 0, 
+#                          region == "NONCEN" ~ .02, 
+#                          TRUE ~ .04)),
+#            aes(x=c(2),
+#                y=.8+height,
+#                label=paste("# repeats =",comma(n_genes))
+#                ), hjust=1)+facet_wrap(~name)+coord_cartesian(ylim=c(0,1))
+p
+
+
+p <- ggplot(chm13.ovl,aes( x = dist, y = methylated_frequency, color=side, fill=side))+
+  geom_smooth(method = "loess", span = 0.15,se = F,alpha=.1)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+#  geom_ribbon(aes(ymin=bot, ymax=top), alpha=0.2, size=0)+
+#  geom_line(aes(y=med_smooth), alpha=.5, size=1) +
+  geom_point(aes(y=methylated_frequency), alpha=.5, size=1)+
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen)+
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1), labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb")))+ylim(0,1)+theme(legend.position = "bottom")+facet_wrap(~type)
+p
+```
+

@@ -1,0 +1,297 @@
+---
+title: "210131_HG002_read_clustering"
+author: "G$"
+date: "1/31/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggpmisc)
+library(Repitools)
+options(knitr.duplicate.label = 'allow')
+library(RColorBrewer)
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r}
+order_reads_facet <- function(x,offset = 0, bounds=NULL, qorder = NULL){
+  # get boundaries of reads if not provided
+  if (is.null(bounds)){
+    bounds <- x %>% group_by(qname, clust) %>%
+      summarize(start = min(start),
+                end = max(end))
+    # label y based on order of smallest start
+    # if q order is given, use this to order
+    if (!is.null(qorder)) {
+      bounds <- bounds %>%
+        mutate(qname = factor(qname,levels = qorder)) %>%
+        arrange(qname) 
+    } else {
+      bounds<- bounds %>% 
+        arrange(start, end) 
+    }
+    bounds <- bounds %>%
+      ungroup() %>%
+      group_by(clust) %>%
+        mutate(
+          readi = row_number(),
+          ymin = -readi - 0.8 - offset, 
+          ymax = ymin + 0.6)
+  }
+  
+  x <- x %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  bounds <- bounds %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  return(list(x = x,bounds = bounds))
+}
+
+
+order_reads_frac <- function(x,offset = 0, bounds=NULL, qorder = NULL){
+  # get boundaries of reads if not provided
+  if (is.null(bounds)){
+    bounds <- x %>% group_by(qname,mean) %>%
+      summarize(start = min(start),
+                end = max(end))
+    # label y based on order of smallest start
+    # if q order is given, use this to order
+    if (!is.null(qorder)) {
+      bounds <- bounds %>%
+        mutate(qname = factor(qname,levels = qorder)) %>%
+        arrange(qname) 
+    } else {
+      bounds<- bounds %>% 
+        arrange(mean, start, end) 
+    }
+    bounds <- bounds %>%
+      ungroup() %>%
+        mutate(
+          readi = row_number(),
+          ymin = -readi - 0.8 - offset, 
+          ymax = ymin + 0.6)
+  }
+  
+  x <- x %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  bounds <- bounds %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  return(list(x = x,bounds = bounds))
+}
+```
+
+
+```{r cars}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/censat"
+
+#acc <- readRDS(paste0(dat, "/pooled/ChrX_accessibilityZscore.rds"))
+```
+
+
+
+```{r pressure, echo=FALSE}
+
+
+reads <- tabix_mbed(paste0(dat, "/chr19_cen.mbed"),extcol = "motif",by = "read") 
+#chrX:72,284,393-72,286,249
+ 
+#chr21 50492-71928
+#chr13 ct_13_1 chr13:5,229,157-5,259,733
+#ct_14_15/16 chr14:2,981,402-3,051,582
+#ct_15_1 chr15:53,665-73,250
+#chr 22
+size_sel <- reads %>%
+  dplyr::mutate(rlen = end-start) %>%
+  filter(rlen >= 50000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+
+rstart=26462301
+rend=26470425
+call.cen <- cgcalls %>%
+  group_by(qname) %>%
+  mutate(readstart = min(start)) %>%
+  mutate(readend = max(end)) %>%
+  filter(readstart <= rstart) %>%
+  filter(readend >= rend) %>%
+  ungroup() %>%
+  filter(start > rstart) %>%
+  filter(end < rend) 
+  
+
+```
+
+```{r}
+library(mclust)
+  mat <- call.cen %>%
+ # filter(mod == "CG") %>%
+  select(c(mcall, qname, start)) %>%
+  distinct() %>%
+  spread(start, mcall)
+  
+
+  mat <- mat  %>%
+  column_to_rownames("qname")
+  
+  mat[is.na(mat)] <- .5
+  model1 <- Mclust(mat,G = 1:9, modelNames = "VII")
+  summary(model1)
+  clust <- model1$classification
+  
+
+  
+  datf <- as.data.frame(unlist(clust)) %>%
+  rownames_to_column() %>%
+  dplyr::rename("qname" = 1, "clust" = 2)
+datf
+
+```
+
+```{r}
+
+cpg_runs <-getRuns(call.cen, maxGap = 100)
+
+all_runs <- merge(cpg_runs,datf, by = "qname" )
+
+spanning_reads <- all_runs %>%
+  select(qname, clust) %>%
+  distinct()
+
+cpg_runs.ordered <- order_reads_facet(all_runs)
+#cpg_runs.ordered <- order_reads_frac(all_runs)
+
+
+
+cpg_runs_plot <- cpg_runs.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+
+  
+
+
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+
+g <- ggplot(cpg_runs_plot,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax))+ geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80")+ geom_rect(cpg_runs_plot,aes(fill=m)) +scale_fill_manual(name = "State", values = meth_pal)+theme_classic()+theme(legend.position = "bottom")+ theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+facet_wrap(~clust, ncol=1)
+
+g
+
+#ggsave(
+#  paste0(figs, "/","CHM13_cen19_phasedSV_zoom.pdf"),
+#  plot = g,
+#  scale = 1,
+#  width = 8,
+#  height = 5,
+#)
+```
+
+
+```{r}
+
+rstart=26323511
+rend=26370154
+call.cen <- cgcalls %>%
+  group_by(qname) %>%
+  mutate(readstart = min(start)) %>%
+  mutate(readend = max(end)) %>%
+  filter(readstart <= rstart) %>%
+  filter(readend >= rend) %>%
+  ungroup() %>%
+  filter(start > rstart) %>%
+  filter(end < rend) 
+  
+
+
+
+
+library(mclust)
+  mat <- call.cen %>%
+ # filter(mod == "CG") %>%
+  select(c(mcall, qname, start)) %>%
+  distinct() %>%
+  spread(start, mcall)
+  
+
+  mat <- mat  %>%
+  column_to_rownames("qname")
+  
+  mat[is.na(mat)] <- .5
+  model1 <- Mclust(mat,G = 1:3, modelNames = "VII")
+  summary(model1)
+  clust <- model1$classification
+  
+
+  
+  datf <- as.data.frame(unlist(clust)) %>%
+  rownames_to_column() %>%
+  dplyr::rename("qname" = 1, "clust" = 2)
+datf
+
+```
+
+```{r}
+
+cpg_runs <-getRuns(call.cen, maxGap = 100)
+
+all_runs <- merge(cpg_runs,datf, by = "qname" )
+
+
+cpg_runs.ordered <- order_reads_facet(all_runs)
+#cpg_runs.ordered <- order_reads_frac(all_runs)
+
+
+
+cpg_runs_plot <- cpg_runs.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+
+  
+all_reads <- all_runs %>%
+  select(qname, clust) %>%
+  distinct() %>%
+  dplyr::rename("bigclust" =clust)
+
+spans <- merge(spanning_reads, all_reads, by = "qname")
+
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+
+g <- ggplot(cpg_runs_plot,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax))+ geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80")+ geom_rect(cpg_runs_plot,aes(fill=m)) +scale_fill_manual(name = "State", values = meth_pal)+theme_classic()+theme(legend.position = "bottom")+ theme(axis.text.y = element_blank(), axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))+facet_wrap(~clust, ncol=1)
+
+g
+
+#ggsave(
+#  paste0(figs, "/","CHM13_SingleReadHOR_cen19_SVphased.pdf"),
+#  plot = g,
+#  scale = 1,
+#  width = 8,
+#  height = 5,
+#)
+```
+
+```{r}
+
+spans <- merge(spanning_reads, all_reads, by = "qname") 
+spans
+
+```
