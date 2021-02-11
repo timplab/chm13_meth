@@ -98,8 +98,9 @@ rule methylbed:
     message: """format methyl bed"""
     threads: 1
     run:
-        temp=outdir+"/{ref}/meth_calls/"+wildcards.id+".tmp"
-        shell("python3 {util}/mtsv2bedGraph.py -q cpg -c 1.5 -g {ref} -i {input.tsv} > {temp}")
+        reffa=reflist[wildcards.ref]
+        temp=outdir+"/"+wildcards.ref+"/meth_calls/"+wildcards.id+".tmp"
+        shell("python3 {util}/mtsv2bedGraph.py -q cpg -c 1.5 -g {reffa} -i {input.tsv} > {temp}")
         shell("sort {temp} -k1,1 -k2,2n | bgzip > {output.methbed}")
         shell("tabix -p bed {output.methbed}")
         shell("rm {temp}")
@@ -113,12 +114,10 @@ rule methylbam:
         outdir + "/{ref}/meth_calls/{id}_meth.bam"
     message: """convert bam for methylation"""
     threads: workflow.cores/2-2
-    shell:
-        """
-        python3 {util}/convert_bam_for_methylation.py -t {threads} --windowsize 1000000 --verbose -b {input.bam} \
-               -c {input.tsv} -f {ref} |\
-               samtools sort -o {output}
-        samtools index {output}
-    
-        """
+    run:
+        reffa=reflist[wildcards.ref]
+        shell("python3 {util}/convert_bam_for_methylation.py -t {threads} --windowsize 1000000 --verbose -b {input.bam}"+
+              " -c {input.tsv} -f {ref} | samtools sort -o {output}")
+        shell("samtools index {output}")
+
 # ###---###
