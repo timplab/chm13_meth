@@ -117,7 +117,7 @@ rule methylbam:
     run:
         reffa=reflist[wildcards.ref]
         shell("python3 {util}/convert_bam_for_methylation.py -t {threads} --windowsize 1000000 --verbose -b {input.bam}"+
-              " -c {input.tsv} -f {ref} | samtools sort -o {output}")
+              " -c {input.tsv} -f {reffa} | samtools sort -o {output}")
         shell("samtools index {output}")
 
 # ###---###
