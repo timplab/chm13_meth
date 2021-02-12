@@ -21,11 +21,9 @@ util = config["nanopore-methylation-utilities"]
 
 ##Pass in directory we are working in --config base=dir - default is /data
 base=config["base"]
+outdir=config["outdir"]
 ##Pass in which references using --config ref=chm13 or ref=hg002 - default is chm13.
-if config["ref"]=="hg002":
-    ref = config["hg002-ref"]
-else:
-    ref = config["chm13-ref"]
+reflist = config["reflist"]
    
 ###--------------###
 
@@ -42,36 +40,37 @@ print(idlist)
 
 # ###------- Pipeline Rules -------#####
 
-workdir: "/data"
+workdir: base
 
 rule all:
     input:
-        expand( base + "/meth_calls/{id}_meth.bam", id=idlist)
+        expand( outdir + "/{ref}/meth_calls/{id}_meth.bam", id=idlist, ref=reflist)
     shell:
         "echo {base}"
 
 ##Make reference index        
 rule ref_index:
     output:
-        ref+".k15.txt"
-    threads: 90
-    shell:
-        """
-        {winnowmap}/meryl count threads={threads} k=15 output {ref}.merylDB {ref}
-        {winnowmap}/meryl print greater-than distinct=0.9998 {ref}.merylDB > {output}
-        """
+        "{ref}.k15.txt"
+    threads: workflow.cores/2-2
+    run:
+        reffa=reflist[wildcards.ref]
+        shell("{winnowmap}/meryl count threads={threads} k=15 output {wildcards.ref}.merylDB {reffa}")
+        shell("{winnowmap}/meryl print greater-than distinct=0.9998 {wildcards.ref}.merylDB > {output}")
 
 ##Align with winnowmap
 rule align:
     input:
         refidx=rules.ref_index.output
     output:
-        bam = base + "/bam/{id}.bam"
-    threads: 90
+        bam = outdir + "/{ref}/bam/{id}.bam"
+    threads: workflow.cores/2-2
     message: """Aligning to reference with winnowmap"""
     run:
         fq=glob.glob(base+"/*"+wildcards.id+"*fastq.gz")[0]
-        shell("{winnowmap}/winnowmap -t {threads} -W {input.refidx} -ax map-ont {ref} {fq} | samtools view -b -u -F 256 | samtools sort -o {output.bam}")
+        reffa=reflist[wildcards.ref]
+        shell("{winnowmap}/winnowmap -t {threads} -W {input.refidx} -ax map-ont {reffa} {fq} |"+
+              "samtools view -b -u -F 256 | samtools sort -o {output.bam}")
         shell("samtools index {output.bam}")
 
 #rule np_index:
@@ -81,24 +80,27 @@ rule nanopolish:
     input:
         bam = rules.align.output.bam
     output:
-        meth=base + "/meth_calls/{id}_CpG_methylation.tsv"
+        meth=outdir + "/{ref}/meth_calls/{id}_CpG_methylation.tsv"
     message: """calling methylation with nanopolish"""
-    threads: 90
+    threads: workflow.cores/2-2
     run:
+        reffa=reflist[wildcards.ref]
         fq=glob.glob(base+"/*"+wildcards.id+"*fastq.gz")[0]
-    	shell("{nanopolish}/nanopolish call-methylation -b {input.bam} -r {fq} -g {ref} -q cpg -t {threads} --progress > {output.meth}")
+    	shell("{nanopolish}/nanopolish call-methylation -b {input.bam} -r {fq} -g {reffa} -q cpg"+
+              " -t {threads} --progress > {output.meth}")
 
 #isac methylbed code
 rule methylbed:
     input:
-        tsv = base + "/meth_calls/{id}_CpG_methylation.tsv"
+        tsv = outdir + "/{ref}/meth_calls/{id}_CpG_methylation.tsv"
     output:
-        methbed=base + "/meth_calls/{id}_CpG_methylation.bed.gz"
+        methbed=outdir + "/{ref}/meth_calls/{id}_CpG_methylation.bed.gz"
     message: """format methyl bed"""
     threads: 1
     run:
-        temp=base+"/meth_calls/"+wildcards.id+".tmp"
-        shell("python3 {util}/mtsv2bedGraph.py -q cpg -c 1.5 -g {ref} -i {input.tsv} > {temp}")
+        reffa=reflist[wildcards.ref]
+        temp=outdir+"/"+wildcards.ref+"/meth_calls/"+wildcards.id+".tmp"
+        shell("python3 {util}/mtsv2bedGraph.py -q cpg -c 1.5 -g {reffa} -i {input.tsv} > {temp}")
         shell("sort {temp} -k1,1 -k2,2n | bgzip > {output.methbed}")
         shell("tabix -p bed {output.methbed}")
         shell("rm {temp}")
@@ -106,18 +108,16 @@ rule methylbed:
 #isac methylbam code
 rule methylbam:
     input:
-        bam = base + "/bam/{id}.bam",
+        bam = outdir + "/{ref}/bam/{id}.bam",
         tsv = rules.methylbed.output.methbed
     output:
-        base + "/meth_calls/{id}_meth.bam"
+        outdir + "/{ref}/meth_calls/{id}_meth.bam"
     message: """convert bam for methylation"""
-    threads: 90
-    shell:
-        """
-        python3 {util}/convert_bam_for_methylation.py -t {threads} --windowsize 1000000 --verbose -b {input.bam} \
-               -c {input.tsv} -f {ref} |\
-               samtools sort -o {output}
-        samtools index {output}
-    
-        """
+    threads: workflow.cores/2-2
+    run:
+        reffa=reflist[wildcards.ref]
+        shell("python3 {util}/convert_bam_for_methylation.py -t {threads} --windowsize 1000000 --verbose -b {input.bam}"+
+              " -c {input.tsv} -f {reffa} | samtools sort -o {output}")
+        shell("samtools index {output}")
+
 # ###---###
