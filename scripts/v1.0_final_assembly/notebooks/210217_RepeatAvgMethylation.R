@@ -2,7 +2,7 @@
 
 # load tidyverse
 library(tidyverse)
-
+library(GenomicRanges)
 # path to data directory and path to output figure directory
 figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/TE/figures"
 dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
