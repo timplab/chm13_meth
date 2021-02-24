@@ -1,0 +1,459 @@
+---
+title: "210125_AcroCen_plots.Rmd"
+author: "G$"
+date: "1/25/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load libraries
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library("ggbio")
+library(BSgenome.t2t.v1.0.release)
+options(knitr.duplicate.label = 'allow')
+source("~/projects/chm13_meth/scripts/v1.0_final_assembly/utils/ilee_plot_utils.R")
+library("ggsci")
+source("~/projects/chm13_meth/scripts/v1.0_final_assembly/utils/methylation_R_utils.R")
+library(rtracklayer)
+library(wesanderson)
+# set data output path
+
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+list=seqnames(BSgenome.t2t.v1.0.release)
+
+# read methylation GRanges data
+chm13_meth <- read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb_split.tsv")) %>%
+  mutate(called_sites_unmethylated = called_sites - called_sites_methylated) %>%
+  filter(chromosome %in% list) %>%
+  GRanges()
+# centromere boundaries
+
+cen <- read_tsv(paste0(dat, "/chm13_final_beds/cenRegions.bed"), col_names = c("chr", "start", "end","name")) %>%
+  filter(chr %in% list)
+cen.gr <- GRanges(cen)
+
+SD <- read_tsv(paste0(dat, "/chm13_final_beds/chm13.draft_v1.0_plus38Y.SDs.bed"), skip=1, col_names = c("chr", "start", "end")) %>%
+  mutate(end=start) %>%
+  filter(chr %in% list) %>%
+  mutate(sd_num=1) %>%
+  GRanges()
+
+kmer <- read_tsv(paste0(dat, "/chm13_final_beds/chm13.v1.single.k51.mrg.bed"), col_names = c("chr", "start", "end"))%>%
+  mutate(end=start) %>%
+  filter(chr %in% list) %>%
+  mutate(kmer_num=1) %>%
+  GRanges()
+
+transmap <- read_tsv(paste0(dat, "/chm13_final_beds/filtered_transmap.bed"), col_names = c("chr", "start", "end"))%>%
+  mutate(end=start) %>%
+  filter(chr %in% list) %>%
+  mutate(gene_num=1) %>%
+  GRanges()
+
+isoseq <- read_tsv(paste0(dat, "/chm13_final_beds/isoseq_annotation.bed"), col_names = c("chr", "start", "end"))%>%
+  mutate(end=start) %>%
+  filter(chr %in% list) %>%
+  mutate(iso_num=1) %>%
+  GRanges()
+
+cat_anno <- read_tsv(paste0(dat, "/chm13_final_beds/CHM13.category-colors.bed.gz"), col_names = c("chr", "start", "end"))%>%
+  mutate(end=start) %>%
+  filter(chr %in% list) %>%
+  mutate(cat_num=1) %>%
+  GRanges()
+
+ultra10 <- read_tsv(paste0(dat, "/chm13_final_beds/ultra10.BED"), col_names = c("chr", "start", "end"))%>%
+  mutate(end=start) %>%
+  filter(chr %in% list) %>%
+  mutate(ul10_num=1) %>%
+  GRanges()
+
+ultra100 <- read_tsv(paste0(dat, "/chm13_final_beds/ultra100.BED"), col_names = c("chr", "start", "end"))%>%
+  mutate(end=start) %>%
+  filter(chr %in% list) %>%
+  mutate(ul100_num=1) %>%
+  GRanges()
+
+ultra500 <- read_tsv(paste0(dat, "/chm13_final_beds/ultra500.BED"), col_names = c("chr", "start", "end"))%>%
+  mutate(end=start) %>%
+  filter(chr %in% list) %>%
+  mutate(ul500_num=1) %>%
+  GRanges()
+
+proA <- read_tsv(paste0(dat, "/proseq/51mers/IlluminaPCRfree_20200922-assembly_51mers_single_mrg_meryl.over.CHM13-5A_proseq_cutadapt-2_bt2-vs-filtered_bt2-N0-k100-chm13-20200922_COV.bed"), col_names = c("chr", "start", "end", "proA_cov"))%>%
+  mutate(end=start) %>%
+  filter(chr %in% list) %>%
+  #mutate(proA_num=1) %>%
+  GRanges()
+
+proB <- read_tsv(paste0(dat, "/proseq/51mers/IlluminaPCRfree_20200922-assembly_51mers_single_mrg_meryl.over.CHM13-5B_proseq_cutadapt-2_bt2-vs-filtered_bt2-N0-k100-chm13-20200922_COV.bed"), col_names = c("chr", "start", "end", "proB_cov"))%>%
+  mutate(end=start) %>%
+  filter(chr %in% list) %>%
+  #mutate(proB_num=1) %>%
+  GRanges()
+```
+
+
+```{r}
+
+  library(BSgenome.t2t.v1.0.release)
+  
+  binnedSum <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewSums(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+
+  binnedMean <- function(bins, numvar, mcolname)
+  {
+    stopifnot(is(bins, "GRanges"))
+    stopifnot(is(numvar, "RleList"))
+    stopifnot(identical(seqlevels(bins), names(numvar)))
+    bins_per_chrom <- split(ranges(bins), seqnames(bins))
+    sums_list <- lapply(names(numvar),
+                        function(seqname) {
+                          views <- Views(numvar[[seqname]],
+                                         bins_per_chrom[[seqname]])
+                          viewMeans(views)
+                        })
+    new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+    mcols(bins)[[mcolname]] <- new_mcol
+    bins
+  }
+  
+  
+CalculateCG <- function (obj, ..., view.width, as.prob = TRUE) 
+{
+    require(BSgenome)
+    seqs <- getSeq(obj, ..., as.character = FALSE)
+    if (missing(view.width)) {
+        res <- letterFrequency(seqs, letters = "CG", as.prob = as.prob)
+    }
+    else {
+        res <- lapply(seqs, function(x) letterFrequencyInSlidingView(x, 
+            view.width, letters = "CG", as.prob = as.prob))
+        if (length(res) == 1) 
+            res <- unlist(res)
+    }
+    res
+}
+
+  blocks <- genomeBlocks(BSgenome.t2t.v1.0.release, chrs = seqnames(), width = 10000)
+
+
+chr.meth <- chm13_meth[seqnames(chm13_meth) %in% list]
+chr.sd <- SD[seqnames(SD)  %in% list]   
+chr.kmer <- kmer[seqnames(kmer)  %in% list]
+chr.transmap <- transmap[seqnames(transmap)  %in% list]
+chr.iso <- isoseq[seqnames(isoseq)  %in% list]
+chr.cat <- cat_anno[seqnames(cat_anno)  %in% list]
+chr.ul10 <- ultra10[seqnames(ultra10)  %in% list]
+chr.ul100 <- ultra100[seqnames(ultra100)  %in% list]
+chr.ul500 <- ultra500[seqnames(ultra500)  %in% list]
+chr.proA <- proA[seqnames(proA)  %in% list]
+chr.proB <- proB[seqnames(proB)  %in% list]
+
+
+  score1 <- coverage(chr.meth, weight="called_sites_methylated")
+  score2 <- coverage(chr.meth, weight="called_sites_unmethylated")
+  score3 <- coverage(chr.meth, weight="num_motifs_in_group")
+  score4 <- coverage(chr.sd, weight="sd_num")
+  score5 <- coverage(chr.kmer, weight="kmer_num")
+  score6 <- coverage(chr.transmap, weight="gene_num")
+  score7 <- coverage(chr.iso, weight="iso_num")
+  score8 <- coverage(chr.cat, weight="cat_num")
+  score9 <- coverage(chr.ul10, weight="ul10_num")
+  score10 <- coverage(chr.ul100, weight="ul100_num")
+  score11 <- coverage(chr.ul500, weight="ul500_num")
+  score12 <- coverage(chr.proA, weight="proA_cov")
+  score13 <- coverage(chr.proB, weight="proB_cov")
+  
+  
+
+  gc.content <- CalculateCG(BSgenome.t2t.v1.0.release, blocks, as.prob = F)
+gc.content.blocks <- GRanges(blocks, gc = gc.content) %>%
+  as.data.frame() %>%
+  mutate(gc.content=gc.C.G/width) %>%
+  dplyr::select(gc.content)
+
+  binned_meth <- binnedSum(blocks, numvar = score1, "called_sites_methylated") %>%
+    as.data.frame()
+  
+  binned_unmeth <-binnedSum(blocks, numvar = score2, "called_sites_unmethylated")%>%
+    as.data.frame()
+  
+  binned_cov <- binnedMean(blocks, numvar = score3, "num_motifs_in_group") %>%
+    as.data.frame()
+  
+  meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames", "width", "strand")) %>%
+  merge(binned_cov, by = c("start", "end", "seqnames", "width", "strand")) %>%
+    filter(seqnames %in% list) %>%
+   # filter(start > rstart) %>%
+   # filter(end < rend) %>%
+    group_by(start, end, seqnames) %>%
+    mutate(sites = called_sites_methylated+called_sites_unmethylated) %>%
+    mutate(freq = called_sites_methylated/sites) %>%
+    ungroup() %>%
+    group_by(seqnames) %>%
+    arrange(start,seqnames) %>%
+    mutate(smooth = rollmean(freq, 3, fill = NA), site_smooth = rollmean(num_motifs_in_group, 3, fill = NA)) %>%
+    ungroup() %>%
+    arrange(seqnames, start)
+  
+binned_sd <- binnedMean(blocks, numvar = score4, "sd_num") %>%
+    as.data.frame() %>%
+  dplyr::select(sd_num)
+binned_kmer <- binnedMean(blocks, numvar = score5, "kmer_num") %>%
+    as.data.frame()%>%
+  dplyr::select(kmer_num)
+binned_transmap <- binnedMean(blocks, numvar = score6, "gene_num") %>%
+    as.data.frame()%>%
+  dplyr::select(gene_num)
+binned_iso <- binnedMean(blocks, numvar = score7, "iso_num") %>%
+    as.data.frame()%>%
+  dplyr::select(iso_num)
+binned_cat <- binnedMean(blocks, numvar = score8, "cat_num") %>%
+    as.data.frame()%>%
+  dplyr::select(cat_num)
+binned_ul10 <- binnedMean(blocks, numvar = score9, "ul10_num") %>%
+    as.data.frame()%>%
+  dplyr::select(ul10_num)
+binned_ul100 <- binnedMean(blocks, numvar = score10, "ul100_num") %>%
+    as.data.frame()%>%
+  dplyr::select(ul100_num)
+binned_ul500 <- binnedMean(blocks, numvar = score11, "ul500_num") %>%
+    as.data.frame()%>%
+  dplyr::select(ul500_num)
+binned_proA <- binnedMean(blocks, numvar = score12, "proA_cov") %>%
+    as.data.frame()%>%
+  dplyr::select(proA_cov)
+binned_proB <- binnedMean(blocks, numvar = score13, "proB_cov") %>%
+    as.data.frame()%>%
+  dplyr::select(proB_cov)
+
+binned.all <- cbind(meth_bins, binned_sd, binned_kmer, binned_cat, binned_transmap,binned_iso,binned_ul10,binned_ul100,binned_ul500,binned_proA,binned_proB,gc.content.blocks)
+
+write.table(binned.all, paste0(dat, "/chm13_final_beds/210126_AllCen_10kbBinned_ALL.bed"), col.names = T, row.names = F, quote=F, sep = "\t")
+```
+
+
+
+```{r}
+rm <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0.fasta_rm.bed"), col_names = F) 
+
+repeatColors =c("DNA"="#C19936",
+                "DNA?"="#C19935",
+                "LINE"="#FFA500",
+                "Low_complexity"="#75B043",
+                "LTR"="#51B756",
+                "RC"="#53BB74",
+                "Retroposon"="#55BE9D",
+                "RNA"="#ff4000",
+                "rRNA"="#52BEBB",
+                "scRNA"="#6B9AD3",
+                "Simple_repeat"="#8992C9",
+                "SINE"="#9A8AC1",
+                "snRNA"="#A886BC",
+                "srpRNA"="#B67EB6",
+                "Unspecified"="#C378B2",
+                "tRNA"="#006400",
+                "Unknown"="#BA55D3",
+                "Satellite"="#53B0E4")
+
+defaultColor = "#000080"
+
+censatColors =c("TE" = "#E87C71",
+                "MER"="#E28455",
+                "HOR"="#D78C32",
+                "BSAT"="#E370AB",
+                "CER" = "#CE9334",
+                "HSAT2"="#C19935",
+                "HSAT1"="#A2A638",
+                "HSAT3"="#8CAC3E",
+                "L1"="#75B042",
+                "LSAU"="#54B346",
+                "LTR"="#51B756",
+                "MST"="#53BB73",
+                "GSAT"="#55BE8D",
+                "GSATII"="#54C0A5",
+                "rRNA"="#52BEBB",
+                "SAR"="#51BDCE",
+                "novel"="#9400D3",
+                "HSAT4"="#53B0E4",
+                "SATR"="#5AA5DA",
+                "CT"="#6B9AD2",
+                "HERV"="#8992C8",
+                "MSAT"="#9A8AC2",
+                "MON"="#A885BC",
+                "SST"="#C378B2",
+                "HSAT5"="#ED72A5",
+                "HSAT6"="#EF768C", 
+                "gap-rDNA"="#ff4000",
+                "L1" = "#ffbf00", 
+                "TAR"= "#0080ff",
+                "ACRO"="#9400D4",
+                "Alu"="#9A8AC3")
+
+sats=c("HSAT1", "HSAT2", "HSAT3", "HSAT4", "HSAT5", "HSAT6", "CT", "BSAT", "HOR", "MON", "Alu", "SATR", "ACRO", "GSATII", "TAR","TE","MER","MST","CER","L1","SST","LSAU","GSAT","MSAT","novel","HERV","LTR", "gap-rDNA")
+censat = read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_annotationTab.bed"), col_names = F) %>%
+  mutate(name = ifelse(grepl("HSat1", X4), "HSAT1", X4)) %>%
+  mutate(name = ifelse(grepl("HSat2", X4), "HSAT2", name)) %>%
+  mutate(name = ifelse(grepl("HSat3", X4), "HSAT3", name)) %>%
+  mutate(name = ifelse(grepl("HSat4", X4), "HSAT4", name)) %>%
+  mutate(name = ifelse(grepl("HSat5", X4), "HSAT5", name)) %>%
+  mutate(name = ifelse(grepl("HSat6", X4), "HSAT6", name)) %>%
+  mutate(name = ifelse(grepl("ct", X4), "CT", name)) %>%
+  mutate(name = ifelse(grepl("bsat", X4), "BSAT", name)) %>%
+  mutate(name = ifelse(grepl("hor", X4), "HOR", name)) %>%
+  mutate(name = ifelse(grepl("mon", X4), "MON", name)) %>%
+  mutate(name = ifelse(grepl("Alu", X4), "Alu", name)) %>%
+  mutate(name = ifelse(grepl("SATR", X4), "SATR", name)) %>%
+  mutate(name = ifelse(grepl("ACRO", X4), "ACRO", name)) %>%
+  mutate(name = ifelse(grepl("GSATII", X4), "GSATII", name)) %>%
+  mutate(name = ifelse(grepl("TAR", X4), "TAR", name)) %>%
+  mutate(name = ifelse(grepl("TE", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("MER", X4), "MER", name)) %>%
+  mutate(name = ifelse(grepl("MST", X4), "MST", name)) %>%
+  mutate(name = ifelse(grepl("CER", X4), "CER", name)) %>%
+  mutate(name = ifelse(grepl("L1", X4), "L1", name)) %>%
+  mutate(name = ifelse(grepl("SST", X4), "SST", name)) %>%
+  mutate(name = ifelse(grepl("LSAU", X4), "LSAU", name)) %>%
+  mutate(name = ifelse(grepl("GSAT", X4), "GSAT", name)) %>%
+  mutate(name = ifelse(grepl("MSAT", X4), "MSAT", name)) %>%
+  mutate(name = ifelse(grepl("novel", X4), "novel", name)) %>%
+  mutate(name = ifelse(grepl("HERV", X4), "HERV", name)) %>%
+  mutate(name = ifelse(grepl("LTR", X4), "LTR", name)) %>%
+  dplyr::select(c(X1, X2, X3, name)) %>%
+  dplyr::filter(name %in% sats) %>%
+  dplyr::rename("chr" =1, "start" = 2 ,"end" =3) 
+```
+
+```{r}
+meth <- ggplot(meth_bins, aes(x = (start/1e6), y= smooth))+geom_line(size =1) + labs(y="Methylation")+theme_classic(base_size = 10)+ylim(0,1)+xlim((rstart/1e6),(rend/1e6))+ theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+kmer.plot <- ggplot(binned_kmer, aes(x = (start/1e6), y= kmer_num))+geom_bar(size =1, stat="identity",color='red') + labs(y="51mers")+theme_classic(base_size = 10)+xlim((rstart/1e6),(rend/1e6))+ theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+transmap.plot <- ggplot(binned_transmap, aes(x = (start/1e6), y= gene_num))+geom_bar(size =1, stat="identity",color='darkblue') + labs(y="Transmap")+theme_classic(base_size = 10)+xlim((rstart/1e6),(rend/1e6))+ theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+iso.plot <- ggplot(binned_iso, aes(x = (start/1e6), y= iso_num))+geom_bar(size =1, stat="identity",color='purple') + labs(y="Iso-Seq")+theme_classic(base_size = 10)+xlim((rstart/1e6),(rend/1e6))+ theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+
+sd.plot <- ggplot(binned_sd, aes(x = (start/1e6), y= sd_num))+geom_bar(size =1, stat="identity",color='darkgreen') + labs(y="SDs")+theme_classic(base_size = 10)+xlim((rstart/1e6),(rend/1e6))+ theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+
+rm_sub <- rm %>%
+  filter(X1 == chrom) %>%
+  filter(X2 >= rstart) %>%
+  filter(X3 <= rend)
+
+rm.plot <- ggplot(data=rm_sub, mapping=aes(xmin=(X2/1e6),xmax=(X3/1e6),ymin=0,ymax=.1,fill=X7))+
+  geom_rect()+theme(legend.position="none") +labs(y="RM")+theme(legend.text=element_text(size=rel(1)))+theme(legend.title=element_blank()) +theme(axis.text.y=element_blank(), axis.ticks.y=element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+coord_cartesian(xlim=c(rstart/1e6,rend/1e6))+scale_fill_manual(values = repeatColors, drop = FALSE)+theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
+
+censat_sub <- censat %>%
+  dplyr::filter(chr == chrom) %>%
+  filter(start >= rstart) %>%
+  filter(end <= rend)
+
+censat.plot <- ggplot(data=censat_sub, mapping=aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1,fill=name))+
+  geom_rect()+theme(legend.position="none") +labs(y="CenSat")+theme(legend.text=element_text(size=rel(1)))+theme(legend.title=element_blank()) +theme(axis.text.y=element_blank(), axis.ticks.y=element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+coord_cartesian(xlim=c(rstart/1e6,rend/1e6))+scale_fill_manual(values = censatColors, drop = FALSE)+theme(legend.title=element_blank())
+
+top_row <- plot_grid(meth,kmer.plot,transmap.plot,iso.plot,sd.plot,rm.plot,censat.plot,ncol = 1, align="v",rel_heights = c(1/4, 1/4,1/4,1/4,1/4,1/8,1/6))
+top_row
+ggsave(
+  paste0(figs, "/methyl_profiles/", chrom, "AcroCen_PanelPlot.pdf"),
+  plot = top_row,
+  scale = 1,
+  width = 10,
+  height = 15
+)
+
+```
+
+```{r}
+# legends
+rm.all <- ggplot(data=rm, mapping=aes(xmin=(X2/1e6),xmax=(X3/1e6),ymin=0,ymax=.1,fill=X7))+
+  geom_rect()+theme(legend.position="bottom") +labs(y="RM")+theme(legend.text=element_text(size=rel(1)))+theme(legend.title=element_blank()) +theme(axis.text.y=element_blank(), axis.ticks.y=element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+coord_cartesian(xlim=c(rstart/1e6,rend/1e6))+scale_fill_manual(values = repeatColors, drop = FALSE)+theme(axis.text.x=element_blank(), axis.ticks.x=element_blank())
+
+
+censat.all <- ggplot(data=censat, mapping=aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1,fill=name))+
+  geom_rect()+theme(legend.position="bottom") +labs(y="CenSat")+theme(legend.text=element_text(size=rel(1)))+theme(legend.title=element_blank()) +theme(axis.text.y=element_blank(), axis.ticks.y=element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+coord_cartesian(xlim=c(rstart/1e6,rend/1e6))+scale_fill_manual(values = censatColors, drop = FALSE)+theme(legend.title=element_blank())
+
+
+legend <- cowplot::get_legend(rm.all)
+legend2 <- cowplot::get_legend(censat.all)
+plot_grid(NULL, legend, legend2, ncol=1)
+```
+
+
+```{r}
+cat <- paste0(dat, "/chm13_final_beds/CHM13_CAT_all_exons.bed")
+cat.gr <- import(cat)
+exp <- read_tsv(paste0(dat, "/chm13_final_beds/chm13.CATv1.salmonQuant.bed"), col_names=c("chr", "start", "end", "name", "TPM")) %>%
+  dplyr::select(c(name, TPM))
+
+
+#22:5749418-5966044
+chrom="chr22"
+zstart=5749418
+zend=5966044
+
+
+
+cat.sub <- cat.gr[seqnames(cat.gr) == chrom & start(cat.gr) > zstart & end(cat.gr) < zend]
+
+transcript.df <- as.data.frame(cat.sub) %>%
+  group_by(name) %>%
+  summarise(start=min(start), end=max(end)) %>%
+   mutate(y = seq_len(length(unique((as.data.frame(cat.sub))$name))))
+transcript.df <- merge(transcript.df, exp, by = "name")
+
+exon.df <- merge(transcript.df, as.data.frame(cat.sub),by = "name")
+exon.df <- merge(exon.df, exp, by="name")
+
+pal <- wes_palette("Zissou1", 100, type = "continuous")
+plot <- ggplot()+
+  geom_rect(data=transcript.df, mapping=aes(xmin=start/1e6,xmax=end/1e6,ymin=y,ymax=y+.1,fill=log10(TPM+1)))+theme(legend.position="bottom")+theme(legend.text=element_text(size=rel(1)))+theme(axis.text.y=element_blank(), axis.ticks.y=element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+geom_rect(exon.df, aes(xmin=start.y/1e6, xmax=end.y/1e6, ymin=y-.3, ymax=y+.3,fill=log10(TPM.x+1)))+theme(axis.title.x=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())+scale_fill_gradientn(colors = pal, limits=c(0,3))
+plot
+
+top <- plot_grid(meth,plot,ncol = 1, align="v",rel_heights = c(1/6, 1/3))
+top
+
+ggsave(
+  paste0(figs, "/methyl_profiles/", chrom, "-", zstart, "-", zend, "_GeneModelPlot.pdf"),
+  plot = plot,
+  scale = 1,
+  width = 10,
+  height = 10
+)
+```
+
