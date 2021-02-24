@@ -9,7 +9,8 @@ This Snakemake pipeline is intended to absorb HG002 pangenome sequencing data an
 configfile: "config.yaml"
 ###-------input paths/files -------###
 
-import glob 
+import glob
+import re
 
 ##WT - note check this to figure out parallelization properly
 ##cores=config["cores"]
@@ -30,10 +31,10 @@ reflist = config["reflist"]
 ##WT - again way more complicated than necessary. I noted that there is a pattern of GM24385_{0..22} I can use, broken only by {NB}
 ##Find the GM24385 and then get the "next" thing after that in split?
 filelist=glob.glob(base+"/*GM24385*gz")
-
+print(filelist)
 idlist=[]
-for file in filelist:
-    nameparts=file.split("_")
+for filey in filelist:
+    nameparts=re.split("[_\/]", filey)
     idlist.append("GM24385_"+nameparts[nameparts.index("GM24385")+1])
 
 print(idlist)
