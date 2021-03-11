@@ -32,21 +32,6 @@ reg = cgcalls %>%
   dplyr::filter(start >= region_start) %>%
   dplyr::filter(end <= region_end)
 
-
-cpg_runs <-getRuns(reg, maxGap = 500)
-
-
-cpg_runs.ordered <- order_reads(cpg_runs)
-
-cpg_runs <- cpg_runs.ordered$x %>%
-  mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
-  mutate(mod = "CpG")
-
-pal <- pal_npg("nrc")(10)
-meth_pal <- c(pal[8],pal[4]) 
-#ids <- order(sapply(seq_along(gcruns.list),function(i){length(unique(gcruns.list$qname))}))
-
-
 bis <- reg %>% 
   group_by(chrom, start) %>%
   summarise(meth_freq = mean(mcall), cov = n()) 
@@ -63,19 +48,12 @@ meth.stat <- bis %>%
   mutate_at(c("min", "max"), as.double) %>%
   mutate(med_smooth=rollmean(med, 10, NA))
 
-meth <- bis %>%
-  ungroup() %>%
-  select(c(start, meth_freq)) %>%
-  column_to_rownames("start") %>%
+
+meth <- meth.stat %>%
+  select(c(min,med_smooth)) %>%
+  column_to_rownames("min") %>%
   na.omit() %>%
   as.matrix()
-
-
-#meth <- meth.stat %>%
-#  select(c(min,med_smooth)) %>%
-#  column_to_rownames("min") %>%
-#  na.omit() %>%
-#  as.matrix()
 
 colnames(meth)<-NULL
 pdf(paste0(figs, "/", chr, "_autocorrelationPlot.pdf")) 
@@ -101,31 +79,10 @@ cgcalls <- mbedByCall(size_sel) %>%
 
 region_start=130000000
 region_end= region_start+50000
+
 reg = cgcalls %>%
   dplyr::filter(start >= region_start) %>%
   dplyr::filter(end <= region_end)
-
-
-cpg_runs <-getRuns(reg, maxGap = 500)
-
-size_sel <- reads %>%
-  mutate(rlen = end-start) %>%
-  filter(rlen >= 50000) %>%
-  mutate(motif = "CG")
-
-cgcalls <- mbedByCall(size_sel) %>%
-  drop_na(mcall)
-
-cpg_runs.ordered <- order_reads(cpg_runs)
-
-cpg_runs <- cpg_runs.ordered$x %>%
-  mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
-  mutate(mod = "CpG")
-
-pal <- pal_npg("nrc")(10)
-meth_pal <- c(pal[8],pal[4]) 
-#ids <- order(sapply(seq_along(gcruns.list),function(i){length(unique(gcruns.list$qname))}))
-
 
 bis <- reg %>% 
   group_by(chrom, start) %>%
