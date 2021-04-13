@@ -1,0 +1,395 @@
+---
+title: "chm13 cut&run"
+author: "G$"
+date: "2/24/2021"
+output: html_document
+---
+
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+options(knitr.duplicate.label = 'allow')
+library(rtracklayer)
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+
+censatColors =c("(CATTC)n" = "#E87C71",
+                "(GAATC)n"="#E28455",
+                "HOR"="#D78C32",
+                "BSAT"="#E370AB",
+                "CER" = "#CE9334",
+                "HSAT2"="#C19935",
+                "HSAT1"="#A2A638",
+                "HSAT3"="#8CAC3E",
+                "Low_complexity"="#75B042",
+                "LSAU"="#54B346",
+                "LTR"="#51B756",
+                "MST"="#53BB73",
+                "GSAT"="#55BE8D",
+                "RNA"="#54C0A5",
+                "rRNA"="#52BEBB",
+                "SAR"="#51BDCE",
+                "ACRO1"="#9400D3",
+                "HSAT4"="#53B0E3",
+                "SATR"="#5AA5DA",
+                "CT"="#6B9AD2",
+                "Simple_repeat"="#8992C8",
+                "SINE"="#9A8AC1",
+                "MON"="#A885BC",
+                "SST"="#C378B2",
+                "HSAT5"="#ED72A5",
+                "HSAT6"="#EF768C", 
+                "gap-rDNA"="#ff4000",
+                "TE" = "#ffbf00", 
+                "TAR"= "#0080ff",
+                "ACRO"="#9400D3", 
+                "DHOR" = "gray")
+```
+
+```{r mbed}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+
+
+censat = read_tsv(paste0(dat, "/annotations/t2t_cenAnnotation.v2.021621.bed"), col_names = F) %>%
+  mutate(name = ifelse(grepl("hsat1", X4), "HSAT1", X4)) %>%
+  mutate(name = ifelse(grepl("hsat2", X4), "HSAT2", name)) %>%
+  mutate(name = ifelse(grepl("hsat3", X4), "HSAT3", name)) %>%
+  mutate(name = ifelse(grepl("hsat4", X4), "HSAT4", name)) %>%
+  mutate(name = ifelse(grepl("hsat5", X4), "HSAT5", name)) %>%
+  mutate(name = ifelse(grepl("hsat6", X4), "HSAT6", name)) %>%
+  mutate(name = ifelse(grepl("ct", X4), "CT", name)) %>%
+  mutate(name = ifelse(grepl("bsat", X4), "BSAT", name)) %>%
+  mutate(name = ifelse(grepl("dhor", X4), "DHOR", name)) %>%
+  mutate(name = ifelse(grepl("hor", name), "HOR", name)) %>%
+  mutate(name = ifelse(grepl("mon", X4), "MON", name)) %>%
+  mutate(name = ifelse(grepl("GSAT", X4), "GSAT", name)) %>%
+  dplyr::select(c(X1, X2, X3, name)) %>%
+  dplyr::rename("chrom" =1, "start" = 2 ,"end" =3) %>%
+  mutate(ID=row_number())
+
+```
+
+```{r}
+
+bw <- paste0(dat, "/cut_and_run/210204_alignments/H3K9me3/CHM13_H3K9me3_cutnrun_hisalt_losalt.F3852.over.chm13v1_unique_100mers_sort.bigwig")
+h3k9 <- import(bw, format="bigwig")
+
+bw <- paste0(dat, "/cut_and_run/210204_alignments/IgG/CHM13_IgG_cutnrun_hisalt_losalt.F3852.over.chm13v1_unique_100mers_sort.bigwig")
+igg <- import(bw, format="bigwig")
+
+censat.gr <- GRanges(censat)
+keepi <- findOverlaps(h3k9,censat.gr)
+freq.matched <- h3k9[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(censat.gr[subjectHits(keepi)]))
+
+h3k9.censat <- as.data.frame(freq.matched) %>%
+  mutate(treat="h3k9me3")
+
+keepi <- findOverlaps(igg,censat.gr)
+freq.matched <- igg[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(censat.gr[subjectHits(keepi)]))
+
+igg.censat <- as.data.frame(freq.matched)%>%
+  mutate(treat="igg")
+```
+
+```{r}
+
+SAT = c("GSAT", "DHOR", "BSAT","HSAT1", "HSAT2", "HSAT3", "HSAT4", "HSAT5", "HSAT6","HOR", "MON", "CT")
+
+merged_treat <- rbind(igg.censat,h3k9.censat) %>%
+  filter(name %in% SAT)
+
+sums <- merged_treat %>%
+  group_by(treat) %>%
+  summarise(total=sum(score)) 
+
+treat.total <- sums$total[1]
+control.total <- sums$total[2]
+
+stat.sum.array <- merged_treat %>%
+  group_by(ID, name, treat) %>%
+  summarise(reads=sum(score)) %>%
+  spread(treat, reads) %>%
+  ungroup() %>%
+  group_by(name) %>%
+  summarise(enrich=log2((h3k9me3/igg)*(control.total/treat.total)))
+
+ggplot(stat.sum.array, aes(x=name, y=enrich, fill=name))+geom_violin()+ scale_fill_manual(values = censatColors, drop = FALSE)+ylim(-1,5)+geom_boxplot(width=.1)
+
+
+
+stat.sum <- merged_treat %>%
+  group_by(name, treat) %>%
+  summarise(reads=sum(score)) %>%
+  spread(treat, reads) %>%
+  ungroup() %>%
+  group_by(name) %>%
+  summarise(enrich=log((h3k9me3/igg)*(control.total/treat.total)))
+
+ggplot(stat.sum, aes(x=name, y=enrich, fill=name))+geom_bar(stat="identity")+ scale_fill_manual(values = censatColors, drop = FALSE)
+
+ggsave(
+  paste0(figs, "/", "AllSatH3K9Me3_enrichment.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 8,
+  height = 5,
+)
+
+stat.sum <- merged_treat %>%
+  filter(seqnames == "chrX") %>%
+  group_by(name, treat) %>%
+  summarise(reads=sum(score)) %>%
+  spread(treat, reads) %>%
+  ungroup() %>%
+  group_by(name) %>%
+  summarise(enrich=log((h3k9me3/igg)*(control.total/treat.total)))
+
+ggplot(stat.sum, aes(x=name, y=enrich, fill=name))+geom_bar(stat="identity")+ scale_fill_manual(values = censatColors, drop = FALSE)
+
+ggsave(
+  paste0(figs, "/", "AllSatH3K9Me3_ChrXONLYenrichment.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 8,
+  height = 5,
+)
+```
+```{r}
+
+reps <- read_tsv(paste0(dat, "/annotations/chm13.draft_v1.0_plus38Y_repeatmasker.out.bed"), col_names = F)
+SAT = c("ALR/Alpha", "GSATII", "GSATX","HSAT4")
+reps.sat <- reps %>%
+  filter(X4 %in% SAT) %>%
+  dplyr::rename("chr"=1, "start"=2, "end"=3, "rep.name"=4)%>%
+  select(chr, start, end, rep.name) %>%
+  filter(chr == "chrX") %>%
+  mutate(rep.name = ifelse(grepl("GSAT", rep.name), "GSAT", rep.name)) 
+
+censat.gr <- GRanges(reps.sat)
+keepi <- findOverlaps(h3k9,censat.gr)
+freq.matched <- h3k9[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(censat.gr[subjectHits(keepi)]))
+
+h3k9.censat <- as.data.frame(freq.matched) %>%
+  mutate(treat="h3k9me3")
+
+keepi <- findOverlaps(igg,censat.gr)
+freq.matched <- igg[queryHits(keepi)]
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(censat.gr[subjectHits(keepi)]))
+
+igg.censat <- as.data.frame(freq.matched) %>%
+  mutate(treat="igg")
+
+merged_treat <- rbind(igg.censat,h3k9.censat) 
+
+sums <- merged_treat %>%
+  group_by(treat) %>%
+  summarise(total=sum(score)) 
+
+treat.total <- sums$total[1]
+control.total <- sums$total[2]
+
+stat.sum.array <- merged_treat %>%
+  group_by(rep.name, treat) %>%
+  summarise(reads=sum(score)) %>%
+  spread(treat, reads) %>%
+  ungroup() %>%
+  group_by(rep.name) %>%
+  summarise(enrich=log2((h3k9me3/igg)*(control.total/treat.total)))
+
+ggplot(stat.sum.array, aes(x=rep.name, y=enrich, fill=rep.name))+geom_bar(stat="identity")
+
+ggsave(
+  paste0(figs, "/", "AllSatH3K9Me3_ChrXONLY_chm13_rmAnnotation_enrichment.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 8,
+  height = 5,
+)
+```
+
+```{r}
+
+chm13_meth <- read_tsv(paste0(dat, "/methylation_calls/methylation_frequency_50kb_split.tsv")) %>%
+  mutate(called_sites_unmethylated = called_sites - called_sites_methylated) %>%
+  GRanges()
+keepi <- findOverlaps(chm13_meth,censat.gr)
+freq.matched <- chm13_meth[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(censat.gr[subjectHits(keepi)]))
+
+# split into groups for plotting
+
+SAT = c("GSAT", "DHOR", "BSAT","HSAT1", "HSAT2", "HSAT3", "HSAT4", "HSAT5", "HSAT6","HOR", "MON", "CT")
+
+
+
+censat_meth <- as.data.frame(freq.matched) %>%
+filter(name %in% SAT)
+
+# violing plot of methylation frequency
+
+stats <- censat_meth %>%
+  group_by(name, seqnames) %>%
+  summarize(med = median(methylated_frequency))
+
+stat.sum <- merged_treat %>%
+  group_by(name, treat, seqnames) %>%
+  summarise(reads=sum(score)) %>%
+  spread(treat, reads) %>%
+  ungroup() %>%
+  group_by(name, seqnames) %>%
+  summarise(enrich=(h3k9me3/igg)*(control.total/treat.total))
+
+
+  for (i in SAT){
+    print(i)
+    sat.sub <- stat.sum %>%
+      filter(name == i)
+    
+    bar <- ggplot(sat.sub, aes(x=seqnames, y=enrich, fill=name))+geom_bar(stat="identity")+ scale_fill_manual(values = censatColors, drop = FALSE)
+
+    ggsave(
+      paste0(figs, "/", i, "H3K9me3_EnrichByChr.pdf"),
+      plot = bar,
+      scale = 1,
+      width = 8,
+      height = 5,
+    )
+    
+  }
+  
+ 
+merged.meth <- merge(stats, stat.sum, by =c("name", "seqnames")) 
+
+ggplot(merged.meth, aes(x=med, y=enrich))+geom_point()+facet_wrap(~name)
+
+ggsave(
+  paste0(figs, "/", "MethvsH3K9Me3_enrichment_scatter.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 8,
+  height = 8,
+)
+
+
+```
+
+```{r}
+
+bw <- paste0(dat, "/cut_and_run/210204_alignments/H3K4me2/CHM13_H3K4me2_cutnrun_hisalt_losalt.F3852.over.chm13v1_unique_100mers_sort.bigwig")
+H3K4me2 <- import(bw, format="bigwig")
+
+censat.gr <- GRanges(censat)
+keepi <- findOverlaps(H3K4me2,censat.gr)
+freq.matched <- H3K4me2[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(censat.gr[subjectHits(keepi)]))
+
+h3k4.censat <- as.data.frame(freq.matched) %>%
+  mutate(treat="H3K4me2")
+
+```
+
+```{r}
+
+SAT = c("GSAT", "DHOR", "BSAT","HSAT1", "HSAT2", "HSAT3", "HSAT4", "HSAT5", "HSAT6","HOR", "MON", "CT")
+
+merged_treat <- rbind(igg.censat,h3k4.censat) %>%
+  filter(name %in% SAT)
+
+sums <- merged_treat %>%
+  group_by(treat) %>%
+  summarise(total=sum(score)) 
+
+treat.total <- sums$total[1]
+control.total <- sums$total[2]
+
+stat.sum.array2 <- merged_treat %>%
+  group_by(ID, name, treat) %>%
+  summarise(reads=sum(score)) %>%
+  spread(treat, reads) %>%
+  ungroup() %>%
+  group_by(name) %>%
+  summarise(enrich=(H3K4me2/igg)*(control.total/treat.total)) %>%
+  mutate(mark="H3K4me2")
+
+stat.sum.array1 <- stat.sum.array %>%
+  mutate(mark="H3K9Me3")
+
+all.marks <- rbind(stat.sum.array1,stat.sum.array2) %>%
+  mutate(log2fc=log2(enrich))
+
+ggplot(all.marks, aes(x=mark,y=log2fc, fill=mark))+geom_violin()+ylim(-4,4)+geom_boxplot(width=.1, outlier.shape= NA)+facet_wrap(~name)+geom_hline(yintercept=0, linetype="dashed")+scale_fill_brewer(palette = "Dark2")
+
+ggsave(
+  paste0(figs, "/", "chm13_CUTnRUN_log2FC.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 10,
+  height = 10,
+)
+```
+
+```{r}
+stat.sum <- merged_treat %>%
+  group_by(name, treat) %>%
+  summarise(reads=sum(score)) %>%
+  spread(treat, reads) %>%
+  ungroup() %>%
+  group_by(name) %>%
+  summarise(enrich=(H3K4me2/igg)*(control.total/treat.total))
+
+ggplot(stat.sum, aes(x=name, y=enrich, fill=name))+geom_bar(stat="identity")+ scale_fill_manual(values = censatColors, drop = FALSE)+ylim(-1,5)
+
+ggsave(
+  paste0(figs, "/", "AllSatH3K4Me2_enrichment.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 8,
+  height = 5,
+)
+```
+
+```{r}
+library(RColorBrewer)
+SAT = c("GSAT", "DHOR", "BSAT","HSAT1", "HSAT2", "HSAT3", "HSAT4", "HSAT5", "HSAT6","HOR", "MON", "CT")
+
+encode <- read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/encode/array_enrichments.tsv")%>%
+  filter(Array %in% SAT)
+
+ggplot(encode, aes(x=Mark,y=Score, fill=Mark))+geom_violin()+ylim(-4,4)+geom_boxplot(width=.1, outlier.shape= NA)+facet_wrap(~Array)+geom_hline(yintercept=0, linetype="dashed")+scale_fill_brewer(palette = "Dark2")
+
+ggsave(
+  paste0(figs, "/", "ENCODE_chip_log2FC.pdf"),
+  plot = last_plot(),
+  scale = 1,
+  width = 8,
+  height = 8,
+)
+```

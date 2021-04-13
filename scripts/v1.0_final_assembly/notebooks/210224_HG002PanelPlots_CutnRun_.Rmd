@@ -1,0 +1,294 @@
+---
+title: "HG002 Cut&Run Cen Panel Plots"
+author: "G$"
+date: "2/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source("~/T2T-Epigenetics/utils/ilee_plot_utils.R")
+source("~/T2T-Epigenetics/utils/methylation_R_utils.R")
+library(tidyverse)
+library(cowplot)
+
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+```
+
+```{r , echo=FALSE}
+cgcalls <- read_csv(paste0(dat, "/HG002/nanonome/methylation_calls/pooled/HG002_nanonome_chrX_CpGmethylation_ByCall.csv"))
+
+cgcalls.gr <-  cgcalls %>%
+  ungroup() %>%
+  group_by(start) %>%
+  summarise(num_meth = sum(mcall == 1), num_unmeth = sum(mcall == 0)) %>%
+  mutate(chr = "chrX", start = start, end = start) %>%
+  GRanges()
+# load and parse censat files
+
+library(BSgenome.HG002.chrX)
+chrx.gr <- GRanges(seqinfo(BSgenome.HG002.chrX))
+
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 10000)
+score1 <- coverage(cgcalls.gr, weight="num_meth")
+score2 <- coverage(cgcalls.gr, weight="num_unmeth")
+#score3 <- coverage(cgcalls.gr, weight="num")
+
+binned_meth <- binnedSum(blocks, numvar = score1, "num_meth") %>%
+  as.data.frame()
+binned_unmeth <-binnedSum(blocks, numvar = score2, "num_unmeth")%>%
+  as.data.frame()
+#binned_CGs <-binnedSum(blocks, numvar = score3, "num")%>%
+#  as.data.frame()
+
+meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames", "width", "strand")) %>%
+  group_by(start, end) %>%
+  mutate(sites = num_meth+num_unmeth) %>%
+  mutate(freq = num_meth/sites) %>%
+#  mutate(cov=sites/num) %>%
+  ungroup() %>%
+  mutate(freq_smooth = rollmean(freq, 3, fill= NA)) %>%
+  na.omit()
+gc_bins <- readRDS(paste0(dat, "/HG002/nanonome/methylation_calls/pooled/ChrX_accessibilityZscore.rds"))
+```
+
+
+```{r}
+
+name="_cutnrun-losalt_chm13_HG002X_HG38YF1548F3852.over.IlluminaPCRfree-chm13-v1-autosome_hg002-chrX_51mers_mrg-meryl_sort.bigwig"
+path="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/cut_and_run/210301_alignments/122920_CUTRUN"
+
+bw <- paste0(path,"/CENPA/HG002_CA",name)
+cenpa <- import(bw, format="bigwig")
+
+bw <- paste0(path,"/IgG/HG002_IgG",name)
+igg_cenpa <- import(bw, format="bigwig")
+
+name="_cutnrun-202021_losalt.F3852.over.IlluminaPCRfree-chm13-v1-autosome_hg002-chrX_51mers_mrg-meryl_sort.bigwig"
+path="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/cut_and_run/210301_alignments/022021_CUTRUN"
+
+bw <- paste0(path,"/CENPB/HG002_CB",name)
+cenpb <- import(bw, format="bigwig")
+
+bw <- paste0(path,"/IgG/HG002_IgG",name)
+igg2 <- import(bw, format="bigwig")
+
+bw <- paste0(path,"/H3K9me3/HG002_H3K9me3",name)
+h3k9 <- import(bw, format="bigwig")
+
+cenpa <- cenpa[seqnames(cenpa) == "chrX"]
+seqlevels(cenpa) <- "chrX"
+igg_cenpa <- igg_cenpa[seqnames(igg_cenpa) == "chrX"]
+seqlevels(igg_cenpa) <- "chrX"
+cenpb <- cenpb[seqnames(cenpb) == "chrX"]
+seqlevels(cenpb) <- "chrX"
+igg2 <- igg2[seqnames(igg2) == "chrX"]
+seqlevels(igg2) <- "chrX"
+h3k9 <- h3k9[seqnames(h3k9) == "chrX"]
+seqlevels(h3k9) <- "chrX"
+
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 1000)
+score1 <- coverage(cenpa, weight="score")
+score2 <- coverage(igg_cenpa, weight="score")
+score3 <- coverage(cenpb, weight="score")
+score5 <- coverage(igg2, weight="score")
+score6 <- coverage(h3k9, weight="score")
+
+ binned_cenpa <- binnedMean(blocks, numvar = score1, "score") %>%
+    as.data.frame() %>%
+   mutate(sample="CENPA") %>%
+   mutate(plot="plot1")
+  
+  binned_igg1 <-binnedMean(blocks, numvar = score2, "score")%>%
+    as.data.frame()%>%
+   mutate(sample="IgG_CENPA")%>%
+   mutate(plot="plot1")
+  
+  binned_cenpb <- binnedMean(blocks, numvar = score3, "score") %>%
+    as.data.frame()%>%
+   mutate(sample="CENPB")%>%
+   mutate(plot="plot2")
+  
+ binned_igg2 <- binnedMean(blocks, numvar = score5, "score") %>%
+    as.data.frame()%>%
+   mutate(sample="IgG_CENPB")%>%
+   mutate(plot="plot2")
+ 
+ binned_h3k9 <- binnedMean(blocks, numvar = score6, "score") %>%
+    as.data.frame()%>%
+   mutate(sample="H3K9me3")%>%
+   mutate(plot="plot3")
+
+  binned_igg3 <- binnedMean(blocks, numvar = score5, "score") %>%
+    as.data.frame()%>%
+   mutate(sample="IgG_CENPB")%>%
+   mutate(plot="plot3")
+  
+binned_CR1 <- rbind(binned_cenpa,binned_cenpb, binned_igg1,binned_igg2,binned_h3k9,binned_igg3)
+
+```
+
+```{r}
+
+rstart=54000000
+rend=61000000
+
+
+cutColors =c("CENPB"="seagreen",
+              "CENPA"="red4",
+              "IgG_CENPA"="grey41", 
+              "IgG_CENPB"="grey53", 
+              "Accessible" = "pink", 
+             "Inaccessible" = "dodgerblue", 
+             "H3K9me3"="purple")
+
+meth <- ggplot(meth_bins, aes(x = (start/1e6), y= freq_smooth))+geom_line(size =1) + labs(y="Methylation")+theme_classic(base_size = 10)+xlim((rstart/1e6),(rend/1e6))+theme(axis.title.x=element_blank(),axis.text.x=element_blank(), axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+ylim(0,1)
+
+gc <- ggplot(gc_bins, aes(x = (start/1e6), y= z_score, color=color), alpha=.5)+geom_bar(size =1, stat="identity") + labs(y="NanoNOMe Z-Score")+theme_classic(base_size = 10)+xlim((rstart/1e6),(rend/1e6))+theme(axis.title.x=element_blank(),axis.text.x=element_blank(), axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+theme(legend.position = "none") +scale_color_manual(values = cutColors, drop = FALSE)
+
+binned_CR.reg1 <- binned_CR1 %>%
+  filter(start >= rstart) %>%
+  filter(end <= rend)
+
+                
+p1 <- ggplot(binned_CR.reg1, aes(x = (start/1e6), y= score, color=sample), alpha=.5)+geom_bar(size =1, stat="identity") + labs(y="Cut&Run Coverage")+theme_classic(base_size = 10)+xlim((rstart/1e6),(rend/1e6))+theme(axis.title.x=element_blank(),axis.text.x=element_blank(), axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+theme(legend.position = "none")+ scale_color_manual(values = cutColors, drop = FALSE)+facet_wrap(~plot,ncol=1,scales="free")
+
+hg002_X <- read_tsv(paste0(dat, "/HG002/annotations/t2t_cenAnnotation.hg002_X.v1.bed"), col_names = F) %>%
+  mutate(name = ifelse(grepl("HSat1", X4), "HSAT1", X4)) %>%
+  mutate(name = ifelse(grepl("HSat2", X4), "HSAT2", name)) %>%
+  mutate(name = ifelse(grepl("HSat3", X4), "HSAT3", name)) %>%
+  mutate(name = ifelse(grepl("HSat4", X4), "HSAT4", name)) %>%
+  mutate(name = ifelse(grepl("HSat5", X4), "HSAT5", name)) %>%
+  mutate(name = ifelse(grepl("HSat6", X4), "HSAT6", name)) %>%
+  mutate(name = ifelse(grepl("ct", X4), "CT", name)) %>%
+  mutate(name = ifelse(grepl("bsat", X4), "BSAT", name)) %>%
+  mutate(name = ifelse(grepl("hor", X4), "HOR", name)) %>%
+  mutate(name = ifelse(grepl("mon", X4), "MON", name)) %>%
+  mutate(name = ifelse(grepl("Alu", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("SATR", X4), "SATR", name)) %>%
+  mutate(name = ifelse(grepl("ACRO", X4), "ACRO", name)) %>%
+  mutate(name = ifelse(grepl("GSATII", X4), "GSAT", name)) %>%
+  mutate(name = ifelse(grepl("TAR", X4), "TAR", name)) %>%
+  mutate(name = ifelse(grepl("TE", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("MER", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("MST", X4), "MST", name)) %>%
+  mutate(name = ifelse(grepl("CER", X4), "CER", name)) %>%
+  mutate(name = ifelse(grepl("L1", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("SST", X4), "SST", name)) %>%
+  mutate(name = ifelse(grepl("LSAU", X4), "LSAU", name)) %>%
+  mutate(name = ifelse(grepl("GSAT", X4), "GSAT", name)) %>%
+  mutate(name = ifelse(grepl("MSAT", X4), "MSAT", name)) %>%
+  mutate(name = ifelse(grepl("novel", X4), "novel", name)) %>%
+  mutate(name = ifelse(grepl("HERV", X4), "TE", name)) %>%
+  mutate(name = ifelse(grepl("LT", X4), "TE", name)) %>%
+  dplyr::select(c(X1, X2, X3, name)) %>%
+  dplyr::rename("chr" =1, "start" = 2 ,"end" =3)
+
+
+rep_leg <- ggplot(data=hg002_X, mapping=aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1, fill = name))+
+  geom_rect()+labs(y="Axis")+labs(y="Axis")+ scale_fill_manual(values = censatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank(), legend.position = "none")+coord_cartesian(xlim = c(rstart/1e6,rend/1e6))
+
+
+top_row <- plot_grid(meth,gc,p1,rep_leg,ncol = 1, align="v",rel_heights = c(1/12, 1/12,1/4,1/25))
+
+top_row
+
+ggsave(
+  paste0(figs, "/methyl_profiles/HG002CenX_PanelPlotCutnRun.pdf"),
+  plot = rep_leg,
+  scale = 1,
+  width = 10,
+  height = 5
+)
+
+
+
+```
+
+```{r}
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 50)
+score1 <- coverage(cenpa, weight="score")
+score2 <- coverage(igg_cenpa, weight="score")
+score3 <- coverage(cenpb, weight="score")
+score4 <- coverage(h3k9, weight="score")
+score5 <- coverage(igg2, weight="score")
+
+ binned_cenpa <- binnedMean(blocks, numvar = score1, "score") %>%
+    as.data.frame() %>%
+   mutate(sample="CENPA") %>%
+   mutate(plot="CENPA")
+  
+  binned_igg1 <-binnedMean(blocks, numvar = score2, "score")%>%
+    as.data.frame()%>%
+   mutate(sample="IgG_CENPA")%>%
+   mutate(plot="CENPA")
+  
+  binned_cenpb <- binnedMean(blocks, numvar = score3, "score") %>%
+    as.data.frame()%>%
+   mutate(sample="CENPB")%>%
+   mutate(plot="CENPB")
+
+ binned_igg2 <- binnedMean(blocks, numvar = score5, "score") %>%
+    as.data.frame()%>%
+   mutate(sample="IgG_CENPB")%>%
+   mutate(plot="CENPB")
+
+ binned_h3k9 <- binnedMean(blocks, numvar = score4, "score") %>%
+    as.data.frame()%>%
+   mutate(sample="H3K9me3")%>%
+   mutate(plot="H3K9me3")
+
+  binned_igg3 <- binnedMean(blocks, numvar = score5, "score") %>%
+    as.data.frame()%>%
+   mutate(sample="IgG_CENPB")%>%
+   mutate(plot="H3K9me3")
+  
+binned_CR1 <- rbind(binned_cenpa,binned_cenpb, binned_igg1,binned_igg2,binned_h3k9,binned_igg3)
+
+rstart=57000000
+rend=58000000
+
+
+meth <- ggplot(meth_bins, aes(x = (start/1e6), y= freq))+geom_line(size =1) + labs(y="Methylation")+theme_classic(base_size = 10)+xlim((rstart/1e6),(rend/1e6))+theme(axis.title.x=element_blank(),axis.text.x=element_blank(), axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+ylim(0,1)
+
+gc <- ggplot(gc_bins, aes(x = (start/1e6), y= z_score, fill=color), alpha=.5)+geom_bar(size =1, stat="identity") + labs(y="NanoNOMe Z-Score")+theme_classic(base_size = 10)+xlim((rstart/1e6),(rend/1e6))+theme(axis.title.x=element_blank(),axis.text.x=element_blank(), axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+theme(legend.position = "none") +scale_fill_manual(values = cutColors, drop = FALSE)+ylim(-4,.1)+geom_hline(yintercept = -3, linetype="dashed")
+
+binned_CR.reg1 <- binned_CR1 %>%
+  filter(start >= rstart) %>%
+  filter(end <= rend)
+
+                
+p1 <- ggplot(binned_CR.reg1, aes(x = (start/1e6), y= score, color=sample), alpha=.5)+geom_bar(size =1, stat="identity") + labs(y="Cut&Run Coverage")+theme_classic(base_size = 10)+xlim((rstart/1e6),(rend/1e6))+theme(axis.title.x=element_blank(),axis.text.x=element_blank(), axis.ticks.x=element_blank(),axis.line.x = element_blank())+theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))+theme(legend.position = "none")+ scale_color_manual(values = cutColors, drop = FALSE)+facet_wrap(~plot,ncol=1,scales="free")
+
+reps <- read_tsv(paste0(dat, "/HG002/annotations/HG002_v0.9.chrX_repeatmasker.out.bed"), col_names = F)
+SAT = c("ALR/Alpha", "GSATII", "GSATX","HSAT4")
+reps.sat <- reps %>%
+  filter(X4 %in% SAT) %>%
+  dplyr::rename("chr"=1, "start"=2, "end"=3, "rep.name"=4)%>%
+  select(chr, start, end, rep.name) %>%
+  filter(chr == "chrX") %>%
+  mutate(rep.name = ifelse(grepl("GSAT", rep.name), "GSAT", rep.name)) %>%
+  mutate(rep.name = ifelse(grepl("ALR/Alpha", rep.name), "HOR", rep.name))
+
+
+rep_leg <- ggplot(data=reps.sat, mapping=aes(xmin=(start/1e6),xmax=(end/1e6),ymin=0,ymax=.1, fill = rep.name))+
+  geom_rect()+labs(y="Axis")+labs(y="Axis")+ scale_fill_manual(values = censatColors, drop = FALSE)+theme(legend.text=element_text(size=rel(1.5)))+theme(legend.title=element_blank()) +theme(axis.title.y=element_blank(),axis.text.y=element_blank(), axis.ticks.y=element_blank(), legend.position = "none")+coord_cartesian(xlim = c(rstart/1e6,rend/1e6))
+
+top_row <- plot_grid(meth,gc,p1,rep_leg,ncol = 1, align="v",rel_heights = c(1/12, 1/12,1/4,1/25))
+
+top_row
+
+ggsave(
+  paste0(figs, "/methyl_profiles/HG002CenX_PanelPlotCutnRunZoom.pdf"),
+  plot = top_row,
+  scale = 1,
+  width = 5,
+  height = 5
+)
+```
+
+

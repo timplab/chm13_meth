@@ -1,0 +1,326 @@
+---
+title: "Read plots"
+author: "G$"
+date: "9/3/2020"
+output: pdf_document
+---
+
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r mbed}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/censat/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/nanonome/methylation_calls/whole_genome"
+
+
+```
+
+
+```{r chr1, echo=F}
+chr="chr15"
+
+reads <- tabix_mbed(paste0(dat, "/chr15_HSat_nanonome1CpG.bed"),extcol = "motif",by = "read") 
+#129004453       142241828 
+
+
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+  filter(rlen >= 20000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+region_start=10000000
+region_end= region_start+50000
+reg = cgcalls %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end)
+  
+sites = read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/censat/restriction_sites/chm13.GGTACC.frags.bed.gz", col_names = c("chr", "start", "end")) %>%
+  filter(chr=="chr15") %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end) %>%
+  mutate(len=end-start) 
+
+cpg_runs <-getRuns(reg, maxGap = 500)
+ 
+
+cpg_runs.ordered <- order_reads(cpg_runs)
+  
+ cpg_runs <- cpg_runs.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+#ids <- order(sapply(seq_along(gcruns.list),function(i){length(unique(gcruns.list$qname))}))
+
+
+bis <- reg %>% 
+  group_by(chrom, start) %>%
+  summarise(meth_freq = mean(mcall), cov = n()) 
+
+
+n_windows=1000
+bis$cut = cut(bis$start, breaks=n_windows)
+
+meth.stat <- bis %>%
+  group_by(cut) %>%
+  summarise(med = median(meth_freq), top = quantile(meth_freq, 0.75), bot = quantile(meth_freq, 0.25), n_genes = length(meth_freq)) %>%
+  mutate(x_tmp = str_sub(cut, 2, -2)) %>% 
+  separate(x_tmp, c("min", "max"), sep = ",") %>% 
+  mutate_at(c("min", "max"), as.double) %>%
+  mutate(med_smooth=rollmean(med, 10, NA))
+
+meth <- ggplot(meth.stat, aes(x = min, y= med_smooth))+geom_line()+ theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.y=element_blank(), axis.title.x=element_blank(), panel.spacing = unit(2, "lines"))#+coord_cartesian(xlim=(c(37595000,37600000)))
+meth
+
+g <- ggplot(cpg_runs,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
+    geom_rect(cpg_runs,aes(fill = m))  +
+#    geom_vline(xintercept = 127638255, linetype == "dashed") +
+    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(),  legend.position= "none",axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))
+
+arrow <- ggplot()+ geom_segment(data = sites, aes(x = start, xend = end, y = 0, yend = 0, group = chr), 
+               colour = "black", 
+               arrow = arrow())+theme_void()
+
+top_row <- plot_grid(meth,g,arrow, align="v", ncol=1,rel_heights = c(1/10, 1/2,1/10))
+top_row
+  
+  ggsave(
+  paste0(figs, "/", chr, "HSAT3_singleread_periodHG002.pdf"),
+  plot = top_row,
+  scale = 1,
+  width = 10,
+  height = 6,
+)
+
+```
+
+
+
+```{r chr1, echo=F}
+chr="chr15"
+
+reads <- tabix_mbed(paste0(dat, "/chr15_HSat_nanonome1CpG.bed"),extcol = "motif",by = "read") 
+#129004453       142241828 
+
+
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+  filter(rlen >= 20000) %>%
+  mutate(motif = "GC")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+#	chr15 10115783 10117587
+region_start=10020000
+region_end= region_start+10000
+reg = cgcalls %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end)
+  
+sites = read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/censat/restriction_sites/chm13.GGTACC.frags.bed.gz", col_names = c("chr", "start", "end")) %>%
+  filter(chr=="chr15") %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end) %>%
+  mutate(len=end-start) 
+
+cpg_runs <-getRuns(reg, maxGap = 20)
+ 
+
+cpg_runs.ordered <- order_reads(cpg_runs)
+  
+ cpg_runs <- cpg_runs.ordered$x %>%
+    mutate(m = ifelse(values == 1, "Methylated","Unmethylated")) %>%
+    mutate(mod = "CpG")
+
+pal <- pal_npg("nrc")(10)
+meth_pal <- c(pal[8],pal[4]) 
+#ids <- order(sapply(seq_along(gcruns.list),function(i){length(unique(gcruns.list$qname))}))
+
+
+bis <- reg %>% 
+  group_by(chrom, start) %>%
+  summarise(meth_freq = mean(mcall), cov = n())%>%
+  mutate(med_smooth=rollmean(meth_freq, 10, NA))
+
+meth <- ggplot(bis, aes(x = start, y= med_smooth))+geom_line()+ theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.y=element_blank(), axis.title.x=element_blank(), panel.spacing = unit(2, "lines"))#+geom_point(alpha=.5)
+meth
+
+
+g <- ggplot(cpg_runs,aes(xmin = start, xmax = end, ymin = ymin, ymax = ymax)) + geom_rect(data = cpg_runs.ordered$bounds, fill = "grey80") + 
+    geom_rect(cpg_runs,aes(fill = m))  +
+#    geom_vline(xintercept = 127638255, linetype == "dashed") +
+    scale_fill_manual(name = "State", values = meth_pal) + theme(axis.text.y = element_blank(),  legend.position= "none",axis.ticks.y = element_blank(), panel.spacing = unit(2, "lines"))
+
+
+arrow <- ggplot()+ geom_segment(data = sites, aes(x = start, xend = end, y = 0, yend = 0, group = chr), 
+               colour = "black", 
+               arrow = arrow())+theme_void()
+
+top_row <- plot_grid(meth,g,arrow, align="v", ncol=1,rel_heights = c(1/10, 1/2,1/10))
+top_row
+  
+  ggsave(
+  paste0(figs, "/", chr, "HSAT3_singlereadCpG_periodHG002zoom.pdf"),
+  plot = top_row,
+  scale = 1,
+  width = 10,
+  height = 6,
+)
+
+```
+
+
+```{r}
+
+
+sites = read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/censat/restriction_sites/chm13.GGTACC.frags.bed.gz", col_names = c("chr", "start", "end")) %>%
+  filter(chr=="chr15") %>%
+  dplyr::filter(start >= 7000000) %>%
+  dplyr::filter(end <= 14000000) %>%
+  mutate(len=end-start) %>%
+  filter(len < 3000) %>%
+  GRanges()
+
+reads <- tabix_mbed(paste0(dat, "/chr15_HSat_nanonome1GpC.bed"),extcol = "motif",by = "read") 
+#129004453       142241828 
+
+
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+  filter(rlen >= 20000) %>%
+  mutate(motif = "GC")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+region_start=7000000
+region_end= 14000000
+reg = cgcalls %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end)
+
+ovl <- findOverlaps(GRanges(reg), sites)
+gc.ovl <- as.data.frame(sites)[subjectHits(ovl),] %>%
+  dplyr::rename(res_start = start, res_end = end) 
+
+bodylen=1800
+flankn=0
+gc.ovl <- as.data.frame(GRanges(reg)[queryHits(ovl),]) %>%
+  bind_cols(gc.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = start - res_start,
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < len,
+        bodylen * dist / len,
+        bodylen + (dist - len)/flankn)))
+
+
+
+gc.labs <- gc.ovl %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+ # filter(quartile != 0) %>%
+  group_by(dist) %>%
+  summarise(num=n(),med = mean(mcall))%>%
+  filter(num>5)%>%
+  mutate(med_smooth = rollmean(med, 15, NA))
+
+
+p1 <- ggplot(gc.labs,aes( x = dist, y = med))+
+  geom_smooth(method = "loess", span = .1,se = F)+
+ # geom_line()+
+  geom_point(alpha=.5)+
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen)+
+  labs( x = "Genomic Position", y = "GpC") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+scale_x_continuous(breaks= c(0,900,1800))+ geom_rug(sides="b")
+p1
+
+```
+
+```{r}
+
+reads <- tabix_mbed(paste0(dat, "/chr15_HSat_nanonome1CpG.bed"),extcol = "motif",by = "read") 
+#129004453       142241828 
+
+
+
+size_sel <- reads %>%
+  mutate(rlen = end-start) %>%
+  filter(rlen >= 20000) %>%
+  mutate(motif = "CG")
+
+cgcalls <- mbedByCall(size_sel) %>%
+  drop_na(mcall)
+
+region_start=7000000
+region_end= 14000000
+reg = cgcalls %>%
+  dplyr::filter(start >= region_start) %>%
+  dplyr::filter(end <= region_end)
+
+ovl <- findOverlaps(GRanges(reg), sites)
+gc.ovl <- as.data.frame(sites)[subjectHits(ovl),] %>%
+  dplyr::rename(res_start = start, res_end = end) 
+
+bodylen=1800
+flankn=0
+gc.ovl <- as.data.frame(GRanges(reg)[queryHits(ovl),]) %>%
+  bind_cols(gc.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = start - res_start,
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < len,
+        bodylen * dist / len,
+        bodylen + (dist - len)/flankn)), 
+    dist = round(dist,2))
+
+
+
+cg.labs <- gc.ovl %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+ # filter(quartile != 0) %>%
+  group_by(dist) %>%
+  summarise(med = median(mcall))%>%
+  mutate(med_smooth = rollmean(med, 15, NA))
+
+
+# 4 is lowest divergence (youngest) 1 is highest divergence (oldest)
+p2 <- ggplot(cg.labs,aes( x = dist, y = med_smooth))+
+  geom_smooth(method = "loess", span = 0.1,se = F)+
+  #geom_line()+
+  geom_point(alpha=.05)+
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen)+
+  labs( x = "Genomic Position", y = "CpG") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+scale_x_continuous(breaks= c(0,900,1800))+ geom_rug(sides="b",alpha=.2)
+p2
+
+
+plot_grid(p1,p2, align = "v", ncol=1)
+```
+
