@@ -17,7 +17,8 @@ cores=config['threads']
 ##################################################
 rule all:
   input:
-   expand(config["workdir"]+"/bsseq/bismark/{sample}_bismark_bt2_pe.bam", sample=samples_tb)
+   expand(config["workdir"]+"/bsseq/bismark/{sample}.R1_bismark_bt2_pe.bam", sample=samples_tb),
+   expand(config['workdir']+"/bsseq/CpGcalls/{sample}", sample=samples_tb)
 
 
 rule bismark_prepare_genome:
@@ -39,7 +40,7 @@ rule bismark_align_pe:
         bsrefdir=config['workdir']+"/Bisulfite_Genome",
         ref = config['reference']
   output:
-        out = config['workdir']+"/bsseq/bismark/{sample}_bismark_bt2_pe.bam"
+        out = config['workdir']+"/bsseq/bismark/{sample}.R1_bismark_bt2_pe.bam"
 	
   threads: config['threads']
   params:
@@ -55,3 +56,18 @@ rule bismark_align_pe:
 		--output_dir {params.outdir} &> {log.log} && touch {output.out} 
 	"""
 
+rule methylation_extract:
+   input:
+         bam =  config['workdir']+"/bsseq/bismark/{sample}.R1_bismark_bt2_pe.bam",
+         bsrefdir =  config['reference']
+   output:
+         outdir = config['workdir']+"/bsseq/CpGcalls/{sample}"
+   shell: """[ -e {output.outdir} ]||mkdir -p {output.outdir} && {repo}/bismark_methylation_extractor -s /
+   --comprehensive --merge_non_CpG \
+	   -o {output.outdir} \
+	   --bedGraph \
+	   --remove_spaces \
+	   --CX --cytosine_report \
+	   --genome_folder {input.bsrefdir} \
+	   {input.bam}
+   """
