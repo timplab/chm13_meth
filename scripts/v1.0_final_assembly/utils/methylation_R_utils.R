@@ -692,3 +692,58 @@ getDistance <- function(query,subject){
                                start(query)-start.feature))
     dist.tb
 }
+
+##################################################################
+#
+# Data Binning
+# 
+##################################################################
+binnedSum <- function(bins, numvar, mcolname)
+{
+  stopifnot(is(bins, "GRanges"))
+  stopifnot(is(numvar, "RleList"))
+  stopifnot(identical(seqlevels(bins), names(numvar)))
+  bins_per_chrom <- split(ranges(bins), seqnames(bins))
+  sums_list <- lapply(names(numvar),
+                      function(seqname) {
+                        views <- Views(numvar[[seqname]],
+                                       bins_per_chrom[[seqname]])
+                        viewSums(views)
+                      })
+  new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+  mcols(bins)[[mcolname]] <- new_mcol
+  bins
+}
+
+binnedMean <- function(bins, numvar, mcolname)
+{
+  stopifnot(is(bins, "GRanges"))
+  stopifnot(is(numvar, "RleList"))
+  stopifnot(identical(seqlevels(bins), names(numvar)))
+  bins_per_chrom <- split(ranges(bins), seqnames(bins))
+  sums_list <- lapply(names(numvar),
+                      function(seqname) {
+                        views <- Views(numvar[[seqname]],
+                                       bins_per_chrom[[seqname]])
+                        viewMeans(views)
+                      })
+  new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+  mcols(bins)[[mcolname]] <- new_mcol
+  bins
+}
+
+
+CalculateCG <- function (obj, ..., view.width, as.prob = TRUE) 
+{
+  require(BSgenome)
+  seqs <- getSeq(obj, ..., as.character = FALSE)
+  if (missing(view.width)) {
+    res <- letterFrequency(seqs, letters = "CG", as.prob = as.prob)
+  }
+  else {
+    res <- lapply(seqs, function(x) letterFrequencyInSlidingView(x, view.width, letters = "CG", as.prob = as.prob))
+    if (length(res) == 1) 
+      res <- unlist(res)
+  }
+  res
+}

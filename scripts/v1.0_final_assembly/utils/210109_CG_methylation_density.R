@@ -57,7 +57,7 @@ dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
 #  ungroup()
 #table(censat$name)
 
-censat.gr <- read_tsv(paste0(dat, "/annotations/t2t-chm13.v1.0.cenSat_annotationFormatted.bed"), col_names = c("chr", "start", "end", "name")) %>%
+censat.gr <- read_tsv(paste0(dat, "/annotations/t2t_cenAnnotation.v2.021621FORMATTED.bed"), col_names = c("chr", "start", "end", "name")) %>%
   GRanges()
 
 # set repeat colors
@@ -112,7 +112,7 @@ mcols(freq.matched) <- cbind.data.frame(
 
 # split into groups for plotting
 
-SAT = c("GSAT", "CER", "SST", "BSAT","HSAT1", "HSAT2", "HSAT3", "HSAT4", "HSAT5", "HSAT6","HOR", "MON", "CT")
+SAT = c("GSAT", "CER", "SST", "BSAT","HSAT1", "HSAT2", "HSAT3", "HSAT4", "HSAT5", "HSAT6","HOR", "MON", "CT", "DHOR")
 
 
 
@@ -197,4 +197,41 @@ violin <- ggplot(cpg, aes(x = factor(name), y = CpG, fill = name))+ scale_fill_m
     
   }
   
- 
+  hor = read_tsv(paste0(dat, "/annotations/t2t_cenAnnotation.v2.021621.bed"), col_names = F) %>%
+    dplyr::filter(grepl("hor", X4))%>%
+    mutate(status = ifelse(grepl("L", X4), "live", "dead"))%>%
+    dplyr::rename("chr" =1, "start" = 2 ,"end" =3) %>%
+    GRanges()
+  
+  keepi <- findOverlaps(chm13_meth,hor)
+  freq.matched <- chm13_meth[queryHits(keepi)]
+  
+  mcols(freq.matched) <- cbind.data.frame(
+    mcols(freq.matched),
+    mcols(hor[subjectHits(keepi)]))
+  
+  stats <- as.data.frame(freq.matched) %>%
+    group_by(status) %>%
+    summarize(med = median(methylated_frequency))
+  
+  censat_meth <- as.data.frame(freq.matched) %>%
+    filter(name %in% SAT)
+  
+  # violing plot of methylation frequency
+  
+  chrx <- censat_meth %>%
+    filter(seqnames == "chrX")
+  
+  stats <- chrx %>%
+    group_by(name) %>%
+    summarize(med = median(methylated_frequency))
+  
+violin <- ggplot(data = chrx, aes(x = factor(name), y = methylated_frequency, fill = name))+geom_violin()+theme_classic(base_size = 20)+ scale_fill_manual(values = censatColors, drop = FALSE)+labs(x = "Methylation", y = "Repeat")+geom_boxplot(width=0.1,outlier.shape = NA)
+  
+ggsave(
+  paste0(figs, "/chm13_allSat_chrX.pdf"),
+  plot = violin,
+  scale = 1,
+  width = 8,
+  height = 5,
+)
