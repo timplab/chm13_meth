@@ -45,9 +45,9 @@ CalculateGpC <- function (obj, ..., step, width, as.prob, as.array, fast.moving.
 
 ```{r mbed}
 figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/nanonome/figures"
-dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/nanonome/methylation_calls"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002"
 
-cov=read_tsv(paste0(dat, "/HG002_nanonome_1-3_merge_chrX.bedgraph"), col_names = F)
+cov=read_tsv(paste0(dat, "/bam/pooled/HG002_nanonome_pooled_winnowmapk15_chrX.bedgraph"), col_names = F)
 
 cov.average <-cov %>%
   filter(X2 > 55000000) %>%
@@ -64,9 +64,83 @@ cov.average <-cov %>%
 
 ```{r}
 
-p <- ggplot(cov.average, aes( x = window.start, y = coverage))+geom_smooth(method = "loess", span = 0.01,se = F)+ylim(0,50)
+p <- ggplot(cov.average, aes( x = window.start, y = coverage))+geom_smooth(method = "loess", span = 0.01,se = F)
 p
+
+ggsave(
+  paste0(figs, "/ChrX_nanonomeCov_nofilter.pdf"),
+  plot = p,
+  width = 8,
+  height = 6
+)
 ```
+
+
+
+```{r mbed}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/nanonome/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002"
+
+cov=read_tsv(paste0(dat, "/bam/pooled/HG002_nanonome_pooled_winnowmapk15_chrX_F256_20kb.bedgraph"), col_names = F)
+
+cov.average <-cov %>%
+  filter(X2 > 54000000) %>%
+  filter(X3 < 63000000) %>%
+  group_by(X1) %>%
+  summarise(
+  window.start = rollapply(X2, width=5000, by=5000, FUN=min, align="left", partial=TRUE),
+  window.end = rollapply(X3, width=5000, by=5000, FUN=max, align="left", partial=TRUE),
+  coverage = rollapply(X4, width=5000, by=5000, FUN=mean, align="left", partial=TRUE)
+) %>%
+  ungroup()
+
+```
+
+```{r}
+
+p <- ggplot(cov.average, aes( x = window.start, y = coverage))+geom_smooth(method = "loess", span = 0.05,se = F)+ylim(0,60)
+p
+
+ggsave(
+  paste0(figs, "/ChrX_nanonomeCov_F256_20kb.pdf"),
+  plot = p,
+  width = 8,
+  height = 6
+)
+```
+
+
+```{r}
+
+library(BSgenome.HG002.chrX)
+chrx.gr <- GRanges(seqinfo(BSgenome.HG002.chrX))
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 100)
+#sliding_blocks <- slidingWindows(blocks, width = 99, step = 1L)
+#sliding_blocks <- unlist(sliding_blocks)
+
+
+GC <- CalculateGpC(BSgenome.HG002.chrX, blocks, as.prob = F)
+chrx_GC <- GRanges(blocks, GpC = GC)
+
+
+
+chrx_GC <-chrx_GC %>%
+  as.data.frame() %>%
+  filter(start > 54000000) %>%
+  filter(end < 63000000) 
+
+
+p <- ggplot(chrx_GC, aes( x = start, y = GpC))+geom_smooth(method = "loess", span=.02)+labs(y= "GpC sites per 100bp", x = "Genomic Coordinates")
+p
+ggsave(
+  paste0(figs, "/GpC_sitesPer100bp.pdf"),
+  plot = p,
+  width = 8,
+  height = 6
+)
+```
+
 
 
 ```{r}
@@ -94,5 +168,3 @@ p <- ggplot(chrx_GC, aes( x = start, y = GpC))+geom_smooth(method = "loess", spa
 p
 
 ```
-
-

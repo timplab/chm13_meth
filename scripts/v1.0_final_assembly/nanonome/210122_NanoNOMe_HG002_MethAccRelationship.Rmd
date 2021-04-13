@@ -1,0 +1,659 @@
+---
+title: "Nanonome Read Binning"
+author: "G$"
+date: "9/3/2020"
+output: pdf_document
+---
+
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+library(knitr)
+library(tidyverse)
+library(bsseq)
+library(Biostrings)
+library(ggplot2)
+library(png)
+library(cowplot)
+options(scipen=999)
+library(zoo)
+library(ggpmisc)
+library(Repitools)
+options(knitr.duplicate.label = 'allow')
+source("/home/isac/Code/ilee/plot/ilee_plot_utils.R")
+library("ggsci")
+source("/home/isac/Code/nanopore-methylation-utilities/methylation_R_utils.R")
+```
+
+```{r mbed}
+figs="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/nanonome/figures"
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/nanonome/methylation_calls"
+
+```
+
+
+```{r functions, include = F}
+getQQ <- function(one,two,qs = seq(0,1,0.01)) {
+  tibble(one = quantile(one,qs,na.rm = T),
+         two = quantile(two,qs,na.rm = T),
+         qunatile = qs)
+}
+# https://stackoverflow.com/questions/43875716/find-start-and-end-positions-indices-of-runs-consecutive-values
+#getRuns <- function(calls){
+#  calls <- calls %>%
+#    filter(mcall != -1) %>%
+#    group_by(qname)
+#  calls.list <- calls %>%
+#    group_split(keep = F)
+#  names(calls.list) <- calls %>% group_keys() %>% .$qname
+#  runs.list <- lapply(calls.list,function(x){
+#    rle(x$mcall) %>%
+#    unclass() %>% as.tibble() %>%
+#    mutate( endi = cumsum(lengths),
+#            starti = c(1,dplyr::lag(endi)[-1]+1),
+#            start = x$start[starti],
+#            end = x$start[endi],
+#            width = end - start + 1) %>%
+#      filter( width >= 0) # remove negative widths (in case of dups, etc.)
+#  })
+#  runs <- bind_rows(runs.list,.id = "qname")
+#}
+order_reads <- function(x,bounds=NULL){
+  # get boundaries of reads if not provided
+  if (is.null(bounds)){
+    bounds <- x%>% group_by(qname) %>%
+      summarize(start = min(start),
+                end = max(end))
+    # label y based on order of smallest start
+    bounds<- bounds %>% arrange(start, end) %>%
+      mutate(
+        readi = seq_len(length(unique(x$qname))),
+        ymin = -readi - 0.8, 
+        ymax = ymin + 0.6)
+  }
+  x <- x %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  bounds <- bounds %>%
+    mutate(ymin = bounds$ymin[match(qname,bounds$qname)],
+           ymax = bounds$ymax[match(qname,bounds$qname)])
+  return(list(x = x,bounds = bounds))
+}
+
+smoothCalls <- function(calls,reg=NULL,bandwidth = 80){
+  calls <- calls %>%
+    mutate(mcall = ifelse(abs(score)>1,sign(score),score)) # ceiling based on log-lik ratio - this uses log-lik ratio when call is not obvious
+  if (is.null(reg)) {
+    xpoints <- seq(min(calls$start),max(calls$start))
+  } else {
+    reg <- as_tibble(reg)
+    xpoints <- seq(reg$start,reg$end)
+  }
+  ks <- ksmooth(calls$start,calls$mcall,bandwidth = 80,kernel = "normal",x.points = xpoints)
+  tibble(
+    start = ks$x,
+    mcall_smooth = ks$y, 
+    mcall = case_when(
+      mcall_smooth > 0 ~ 1,
+      mcall_smooth < 0 ~ 0,
+      TRUE ~ -1)) 
+}
+```
+
+```{r}
+
+
+repeatColors =c("HSAT2"="#C19935",
+                "HSAT1"="#A2A638",
+                "HSAT3"="#8CAC3E",
+                "(CATTC)n" = "#E87C71",
+                "HSAT4"="#53B0E3",
+                "HSAT5"="#ED72A5",
+                "HSAT6"="#EF768C", 
+                "(GAATC)n"="#E28455",
+                "ALR/Alpha"="#D78C32",
+                "6kbHsap" = "#D8BFD8",
+                "BSR/Beta"="#E370AB",
+                "CER" = "#CE9334",
+                "DNA"="#C19935",
+                "DNA?"="#C19935",
+                "GSAT"="#4169E1",
+                "LINE"="#FFA500",
+                "Low_complexity"="#75B042",
+                "LSAU"="#54B346",
+                "LTR"="#51B756",
+                "RC"="#53BB73",
+                "Retroposon"="#55BE8D",
+                "RNA"="#54C0A5",
+                "rRNA"="#52BEBB",
+                "SAR"="#51BDCE",
+                "SATR2"="#4EB8DF",
+                "GSATII"="#6B8E23",
+                "SATR1"="#5AA5DA",
+                "scRNA"="#6B9AD2",
+                "Simple_repeat"="#8992C8",
+                "SINE"="#9A8AC1",
+                "snRNA"="#A885BC",
+                "srpRNA"="#B67EB6",
+                "SST1"="#C378B2",
+                "HSATII"="#D173AF",
+                "tRNA"="#006400",
+                "ACRO1"="#9400D3",
+                "Unknown"="#BA55D3", 
+                "(GAATG)n"="#ff4000",
+                "D20S16" = "#ffbf00", 
+                "SATR2"= "#0080ff", 
+                "TAR1" = "#000080", 
+                "SUBTEL2_sat"= "#FFB6C1", 
+                "GSATX" = "#D2691E", 
+                "MSR1" = "#708090")
+
+
+reps <- read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/annotations/hg002.chrX.fasta_rm.bed", col_names = F) %>%
+  mutate(name = ifelse(X7 == "Satellite", X4, X7))
+```
+
+```{r load_data, include=F}
+#readsGC <- tabix_mbed(paste0(dat, "/pooled/HG002_nanonome_chrX_GpCmethylation_pooled.bed.gz"),extcol = #"motif",by = "read") 
+#
+#size_sel <- readsGC %>%
+#  mutate(rlen = end-start) %>%
+#  filter(rlen >= 20000) %>%
+#  mutate(motif = "GC")
+#
+#gccalls <- mbedByCall(size_sel) %>%
+#  drop_na(mcall)
+#
+gccalls <- read_csv(paste0(dat, "/pooled/HG002_nanonome_chrX_GpCmethylation_ByCall.csv"))
+
+
+cgcalls <- read_csv(paste0(dat, "/pooled/HG002_nanonome_chrX_CpGmethylation_ByCall.csv"))
+
+cgcalls.gr <-  cgcalls %>%
+  ungroup() %>%
+  group_by(start) %>%
+  summarise(num_meth = sum(mcall == 1), num_unmeth = sum(mcall == 0)) %>%
+  mutate(chr = "chrX", start = start, end = start) %>%
+  GRanges()
+
+```
+
+
+```{r binGC, echo=F}
+calls.gr <-  gccalls %>%
+  ungroup() %>%
+  group_by(start) %>%
+  summarise(num_meth = sum(mcall == 1), num_unmeth = sum(mcall == 0)) %>%
+  mutate(chr = "chrX", start = start, end = start) %>%
+  GRanges()
+
+library(BSgenome.HG002.chrX)
+chrx.gr <- GRanges(seqinfo(BSgenome.HG002.chrX))
+
+
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 50000)
+binnedSum <- function(bins, numvar, mcolname)
+{
+  stopifnot(is(bins, "GRanges"))
+  stopifnot(is(numvar, "RleList"))
+  stopifnot(identical(seqlevels(bins), names(numvar)))
+  bins_per_chrom <- split(ranges(bins), seqnames(bins))
+  sums_list <- lapply(names(numvar),
+      function(seqname) {
+          views <- Views(numvar[[seqname]],
+                         bins_per_chrom[[seqname]])
+          viewSums(views)
+      })
+  new_mcol <- unsplit(sums_list, as.factor(seqnames(bins)))
+  mcols(bins)[[mcolname]] <- new_mcol
+  bins
+}
+
+score1 <- coverage(calls.gr, weight="num_meth")
+score2 <- coverage(calls.gr, weight="num_unmeth")
+
+binned_meth <- binnedSum(blocks, numvar = score1, "num_meth") %>%
+  as.data.frame()
+binned_unmeth <-binnedSum(blocks, numvar = score2, "num_unmeth")%>%
+  as.data.frame()
+
+meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames", "width", "strand")) %>%
+  group_by(start, end) %>%
+  mutate(sites = num_meth+num_unmeth) %>%
+  mutate(freq = num_meth/sites) %>%
+  na.omit()
+
+freqmean=mean(meth_bins$freq)
+freqsd=sd(meth_bins$freq)
+
+
+gc_bins <- meth_bins %>%
+  mutate(z_score = (freq - freqmean) / freqsd) %>%
+  mutate(color = case_when(z_score > 0 ~ "Accessible", 
+                           TRUE ~ "Inaccessible")) 
+meth_GC <- ggplot(gc_bins, aes(x = start/1e6, y= z_score, fill = color))+geom_bar(stat = "identity", position = "dodge")+ylim(-3,5)+labs(x="Genomic coordinates (Mb)", y="Accessibility Z-score")+theme_classic(base_size = 12)+theme(legend.position = "bottom")+geom_vline(xintercept=c(55922235/1e6,59189270/1e6), linetype = "dashed")
+meth_GC
+```
+
+
+```{r}
+
+
+score1 <- coverage(cgcalls.gr, weight="num_meth")
+score2 <- coverage(cgcalls.gr, weight="num_unmeth")
+
+binned_meth <- binnedSum(blocks, numvar = score1, "num_meth") %>%
+  as.data.frame()
+binned_unmeth <-binnedSum(blocks, numvar = score2, "num_unmeth")%>%
+  as.data.frame()
+
+meth_bins <- merge(binned_meth, binned_unmeth, by = c("start", "end", "seqnames", "width", "strand")) %>%
+  group_by(start, end) %>%
+  mutate(sites = num_meth+num_unmeth) %>%
+  mutate(freq = num_meth/sites) %>%
+  na.omit()
+
+freqmean=mean(meth_bins$freq)
+freqsd=sd(meth_bins$freq)
+
+
+cg_bins <- meth_bins %>%
+  mutate(z_score = (freq - freqmean) / freqsd) %>%
+  mutate(color = case_when(z_score > 0 ~ "Methylated", 
+                           TRUE ~ "Unmethylated")) 
+
+meth_CG <- ggplot(cg_bins, aes(x = start/1e6, y= z_score, fill = color))+geom_bar(stat = "identity", position = "dodge")+ylim(-3,5)+labs(x="Genomic coordinates (Mb)", y="Accessibility Z-score")+theme_classic(base_size = 12)+theme(legend.position = "bottom")+geom_vline(xintercept=c(55922235/1e6,59189270/1e6), linetype = "dashed")
+meth_CG
+
+
+top_row <- plot_grid(meth_CG,meth_GC, ncol =1,align = "v",rel_heights = c(1/3, 1/3))
+top_row
+
+#ggsave(
+#  paste0(figs, "/NanonomeCpG_GpC_pooled_cenx_profile.pdf"),
+#  plot = top_row,
+#  scale = 1,
+#  width = 10,
+#  height = 8
+#)
+```
+
+```{r}
+
+cg <- cg_bins %>%
+  ungroup() %>%
+  dplyr::select(z_score) %>%
+  rename( z_score = "cg_score")
+
+gc <- gc_bins %>%
+  ungroup() %>%
+  dplyr::select(z_score) %>%
+  rename( z_score = "gc_score")
+  
+zscore.all <- cbind(gc,cg)
+rf <- colorRampPalette(rev(brewer.pal(11,'Spectral')))
+r <- rf(32)
+
+c <- cor(zscore.all$gc_score, zscore.all$cg_score)
+title <- sprintf("N = %d r = %.3f", nrow(zscore.all), c)
+ggplot(zscore.all, aes(gc_score, cg_score))+
+    geom_bin2d(bins=20) + scale_fill_gradientn(colors=r, trans="log10") +
+    xlab("K50") +
+    ylab("WG") +
+    theme_bw(base_size=20) +
+    ggtitle(title)
+
+ggplot(zscore.all, aes(gc_score, cg_score))+
+    geom_point(alpha=.5) +
+    ggtitle(title)
+```
+
+```{r}
+
+library(karyoploteR)
+library(BSgenome.HG002.chrX)
+gc_bins.order <- gc_bins %>%
+  arrange(start)
+cg_bins.order <- cg_bins %>%
+  arrange(start)
+
+
+CalculateCpG <- function (obj, ..., step, width, as.prob, as.array, fast.moving.side,with.labels) 
+{
+  require(BSgenome)
+  seqs <- getSeq(obj, ..., as.character = FALSE)
+  if (missing(step)) {
+    res <- oligonucleotideFrequency(seqs, 2, as.prob = as.prob)[,7]
+  }
+  else {
+    res <- lapply(seqs, function(x) oligonucleotideFrequency(seqs, width = 2, step = step, as.prob = as.prob, as.array = as.array,fast.moving.side=fast.moving.side,with.labels=with.labels)[,7])
+    if (length(res) == 1) 
+      res <- unlist(res)
+  }
+  res
+}
+########
+
+
+# build t2t BSgenome package and load it as BSgenome.t2t.v1.1
+
+# split genome into 200bp bins and calculate CpG density per bin, save as GRanges object for easy reloading, run once comment out
+
+hg002.gr <- GRanges(seqinfo(BSgenome.HG002.chrX))
+blocks <- genomeBlocks(BSgenome.HG002.chrX, chrs = seqnames(BSgenome.HG002.chrX), width = 50000)
+
+#sliding_blocks <- slidingWindows(blocks, width = 199, step = 1L)
+#sliding_blocks <- unlist(sliding_blocks)
+
+hg002_CG <- CalculateCpG(BSgenome.HG002.chrX, blocks, as.prob = F)
+
+hg002 <- GRanges(blocks, CpG = hg002_CG)
+
+hg002.cpg <- as.data.frame(hg002) %>%
+  mutate(CpG_freq = CpG/width)
+
+#saveRDS(chm13, file =paste0(dat, "/reference/chm13_sliding_200_CpG.rds"))
+#chm13 <- readRDS(paste0(dat, "/reference/chm13_sliding_200_CpG.rds"))
+
+
+dat="/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly"
+ch.active <- read_tsv(paste0(dat, "/gene_expression/stringtie2/HG002_SRR13086640/HG002_SRR13086640_abun.txt")) %>%
+  filter(FPKM > 1) %>%
+  dplyr::rename("seqnames"= Reference) %>%
+  filter(seqnames == "chrX") %>%
+  GRanges()
+ch.inctive <- read_tsv(paste0(dat, "/gene_expression/stringtie2/HG002_SRR13086640/HG002_SRR13086640_abun.txt")) %>%
+  filter(FPKM <= 1) %>%
+  dplyr::rename("seqnames"= Reference) %>%
+  filter(seqnames == "chrX") %>%
+  GRanges()
+
+sine <- read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/annotations/HG002_v0.9.chrX_repeatmasker.out.bed", col_names = F) %>%
+  filter(X7 == "SINE") %>%
+  dplyr::rename("chr"  = X1, "start" = X2, "end" = X3, "rep" =  X7) %>%
+  GRanges()
+line <- read_tsv("/kyber/Data/Nanopore/Analysis/gmoney/CHM13/v1.0_final_assembly/HG002/annotations/HG002_v0.9.chrX_repeatmasker.out.bed", col_names = F) %>%
+  filter(X7 == "LINE") %>%
+  dplyr::rename("chr"  = X1, "start" = X2, "end" = X3, "rep" =  X7) %>%
+  GRanges()
+
+kp <- plotKaryotype(genome = "BSgenome.HG002.chrX")
+kpAddBaseNumbers(kp)
+kpBars(kp, chr="chrX", x0=cg_bins.order$start,x1=cg_bins.order$end, y1=(cg_bins.order$z_score)/20, y0=0,data.panel = 1,r0=0,r1=.3)
+kpBars(kp, chr="chrX", x0=gc_bins.order$start,x1=gc_bins.order$end, y1=(gc_bins.order$z_score)/20, y0=0,data.panel = 1,r0=.33,r1=.6)
+kpPlotDensity(kp, ch.inctive, window.size = 50000, data.panel="ideogram", col="#3388FF", border="#3388FF")
+kpPlotDensity(kp, ch.active, window.size = 50000, data.panel="ideogram", col="#37004D", border="#37004D")
+kpPlotDensity(kp, sine, window.size = 50000, data.panel=2,r0=.63,r1=1, col="#37004D", border="#37004D")
+kpPlotDensity(kp, line, window.size = 50000, data.panel=2,r0=1,r1=1.3, col="#37004D", border="#37004D")
+kpLines(kp,chr="chrX", x=hg002.cpg$start, y=hg002.cpg$CpG_freq, data.panel=2,r0=1.3,r1=4)
+```
+
+```{r}
+gc_bins.gr <- gc_bins %>%
+  filter(start )
+  GRanges()
+
+genes <- read_tsv(paste0(dat, "/gene_expression/stringtie2/HG002_SRR13086640/HG002_SRR13086640_abun.txt")) %>%
+  dplyr::rename("seqnames"= Reference) %>%
+  GRanges()
+
+keepi <- findOverlaps(gc_bins.gr,genes)
+freq.matched <- gc_bins.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(genes[subjectHits(keepi)]))
+
+genes.access <- as.data.frame(freq.matched)
+
+ggplot(genes.access, aes(y=FPKM, x=color))+geom_violin()+scale_y_log10()+geom_boxplot(width=.1, outlier.shape = "none")
+```
+
+```{r}
+gc_bins.gr <- gc_bins %>%
+  mutate(region=case_when(start > 55000000 & end < 60000000 ~ "cen", 
+                          TRUE ~ "non-cen")) %>%
+  filter(region == "non-cen") %>%
+  GRanges()
+
+sine.num <- as.data.frame(sine) %>%
+  mutate(num=1) %>%
+  mutate(end=start) %>%
+  GRanges()
+  
+score1 <- coverage(sine.num, weight="num")
+
+binned_sine <- binnedSum(blocks, numvar = score1, "num") %>%
+  as.data.frame()
+
+sine.gc <- merge(binned_sine, gc_bins, by=c("start", "end","seqnames"))
+ggplot(sine.gc, aes(y=num, x=color))+geom_violin()+scale_y_log10()+geom_boxplot(width=.1)
+
+
+open=sine.gc %>%
+  filter(color == "Accessible") 
+closed=sine.gc %>%
+  filter(color == "Inaccessible")
+t.test(open$num, closed$num, alternative = "two.sided", var.equal = FALSE)
+
+
+sine.gr <- as.data.frame(sine) %>%
+  mutate(ID = row_number()) %>%
+  mutate(rep_start = start, rep_end = end) %>%
+  GRanges()
+keepi <- findOverlaps(gc_bins.gr,sine.gr)
+freq.matched <- gc_bins.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(sine.gr[subjectHits(keepi)]))
+
+sine.access <- as.data.frame(freq.matched) %>%
+  dplyr::select(c(ID, seqnames, rep_start, rep_end, X4, rep, X8, z_score, color)) %>%
+  distinct() %>%
+  GRanges()
+
+
+keepi <- findOverlaps(cgcalls.gr,sine.access)
+freq.matched <- cgcalls.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(sine.access[subjectHits(keepi)]))
+
+list=c("AluY", "AluSx", "AluJb")
+sine.meth.access <- as.data.frame(freq.matched) %>%
+  mutate(freq=num_meth/(num_meth+num_unmeth)) %>%
+  filter(X4 %in% list)
+
+p <- ggplot(sine.meth.access, aes(y=freq, x=X4, fill=color))+geom_violin()
+
+p+geom_boxplot(width=0.1,outlier.shape = NA,position = position_dodge(width = .9))
+
+open=sine.meth.access %>%
+  filter(color == "Accessible") 
+closed=sine.meth.access %>%
+  filter(color == "Inaccessible")
+t.test(open$freq, closed$freq, alternative = "two.sided", var.equal = FALSE)
+```
+
+```{r}
+sine.num <- as.data.frame(line) %>%
+  mutate(num=1) %>%
+  mutate(end=start) %>%
+  GRanges()
+  
+score1 <- coverage(sine.num, weight="num")
+
+binned_sine <- binnedSum(blocks, numvar = score1, "num") %>%
+  as.data.frame()
+
+sine.gc <- merge(binned_sine, gc_bins, by=c("start", "end","seqnames"))
+ggplot(sine.gc, aes(y=num, x=color))+geom_violin()+geom_boxplot(width=.1,outlier.colour = NA )
+open=sine.gc %>%
+  filter(color == "Accessible") 
+closed=sine.gc %>%
+  filter(color == "Inaccessible")
+t.test(open$num, closed$num, alternative = "two.sided", var.equal = FALSE)
+sine.gr <- as.data.frame(line) %>%
+  mutate(ID = row_number()) %>%
+  mutate(rep_start = start, rep_end = end) %>%
+  GRanges()
+keepi <- findOverlaps(gc_bins.gr,sine.gr)
+freq.matched <- gc_bins.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(sine.gr[subjectHits(keepi)]))
+
+sine.access <- as.data.frame(freq.matched) %>%
+  dplyr::select(c(ID, seqnames, rep_start, rep_end, X4, rep, X8, z_score, color)) %>%
+  distinct() %>%
+  GRanges()
+
+
+keepi <- findOverlaps(cgcalls.gr,sine.access)
+freq.matched <- cgcalls.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(sine.access[subjectHits(keepi)]))
+
+#list=c("AluY", "AluSx", "AluJb")
+sine.meth.access <- as.data.frame(freq.matched) %>%
+  mutate(freq=num_meth/(num_meth+num_unmeth)) 
+
+p <- ggplot(sine.meth.access, aes(y=freq, x=color))+geom_violin()
+
+p+geom_boxplot(width=0.1,outlier.shape = NA,position = position_dodge(width = .9))
+open=sine.meth.access %>%
+  filter(color == "Accessible") 
+closed=sine.meth.access %>%
+  filter(color == "Inaccessible")
+t.test(open$freq, closed$freq, alternative = "two.sided", var.equal = FALSE)
+```
+
+```{r}
+genes <- read_tsv(paste0(dat, "/gene_expression/stringtie2/HG002_SRR13086640/HG002_SRR13086640_abun.txt")) %>%
+  dplyr::rename("seqnames"= Reference) %>%
+  filter(seqnames== "chrX") %>%
+  mutate(End = Start) %>%
+  mutate(num=1) %>%
+  GRanges()
+  
+score1 <- coverage(genes, weight="num")
+
+binned_sine <- binnedSum(blocks, numvar = score1, "num") %>%
+  as.data.frame()
+
+sine.gc <- merge(binned_sine, gc_bins, by=c("start", "end","seqnames"))
+ggplot(sine.gc, aes(y=num, x=color))+geom_boxplot()
+
+open=sine.gc %>%
+  filter(color == "Accessible") 
+closed=sine.gc %>%
+  filter(color == "Inaccessible")
+t.test(open$num, closed$num, alternative = "two.sided", var.equal = FALSE)
+
+```
+```{r}
+
+genes <- read_tsv(paste0(dat, "/gene_expression/stringtie2/HG002_SRR13086640/HG002_SRR13086640_abun.txt")) %>%
+#  filter(FPKM > 1) %>%
+  mutate(direction = Strand) %>%
+  dplyr::rename("seqnames"= Reference) %>%
+  mutate(gene_start=Start, gene_end =End) %>%
+  filter(seqnames == "chrX") %>%
+  GRanges()
+
+keepi <- findOverlaps(gc_bins.gr,genes)
+freq.matched <- gc_bins.gr[queryHits(keepi)]
+
+mcols(freq.matched) <- cbind.data.frame(
+  mcols(freq.matched),
+  mcols(genes[subjectHits(keepi)]))
+
+genes.access <- as.data.frame(freq.matched) %>%
+  dplyr::select(c(seqnames, gene_start, gene_end, Gene.Name, FPKM, z_score, color,direction)) %>%
+  distinct() %>%
+  GRanges()
+
+
+flankn <- 10000
+
+bodylen <- 1
+l1_regions <- as.data.frame(genes.access) %>%
+  mutate(start = start - flankn, end = end + flankn) %>%
+  GRanges()
+
+ovl <- findOverlaps(cgcalls.gr, l1_regions)
+genes.ovl <- as.data.frame(genes.access)[subjectHits(ovl),] %>%
+  dplyr::mutate(genewidth = end - start) %>%
+  dplyr::rename(gene_start = start, gene_end = end) 
+
+chm13.ovl <- as.data.frame(cgcalls.gr[queryHits(ovl),]) %>%
+  bind_cols(genes.ovl) %>%
+  dplyr::rename(seqnames = 1) %>%
+  dplyr::mutate(dist = ifelse(direction == "+",start - gene_start, gene_end - start),
+    dist = ifelse(dist < 0, dist/flankn,
+      ifelse(dist < genewidth,
+        bodylen * dist / genewidth,
+        bodylen + (dist - genewidth)/flankn)), 
+    dist = round(dist,3)
+    ) %>%
+  mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  ungroup() %>%
+  group_by(dist) %>%
+  mutate(med_meth = median(methylated_frequency)) %>%
+  ungroup()
+  
+
+
+n_windows=500
+chm13.ovl$cut = cut(chm13.ovl$dist, breaks=n_windows)
+
+chm13.ovl.labs <- chm13.ovl %>%
+ # mutate(reg = ifelse(Name %in% CT.genes$Name, "CT", "non-CT")) %>%
+ # filter(quartile != 0) %>%
+  group_by(cut,color) %>%
+ # mutate(methylated_frequency = num_meth/(num_meth+num_unmeth)) %>%
+  summarise(med = median(methylated_frequency), top = quantile(methylated_frequency, 0.75), bot = quantile(methylated_frequency, 0.25), n_genes = length(methylated_frequency),color=color) %>%
+  mutate(x_tmp = str_sub(cut, 2, -2)) %>% 
+  separate(x_tmp, c("min", "max"), sep = ",") %>% 
+  mutate_at(c("min", "max"), as.double) %>%
+  ungroup() %>%
+  distinct() %>%
+  group_by(color) %>%
+  arrange(min) %>%
+  mutate(med_smooth = rollmean(med, 5, NA))
+
+
+p <- ggplot(chm13.ovl.labs,aes( x = min, y = med_smooth, color=color,fill = color))+
+ # geom_smooth(method = "loess", span = 0.2,se = F,alpha=.1)+
+#  geom_smooth(se=T)+lims( y = c(0,1)) +
+  geom_ribbon(aes(ymin=bot, ymax=top), alpha=0.2, size=0)+
+  geom_line(aes(y=med_smooth), alpha=.5, size=1) +
+  geom_point(aes(y=med_smooth), alpha=.5, size=1)+
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = bodylen)+
+  labs( x = "Genomic Position", y = "Aggregated Methylation Frequency") +
+theme(legend.background = element_rect(color = "black")) +
+  theme_classic()+scale_x_continuous(breaks= c(-1,0,bodylen,bodylen + 1), labels = c(paste0("-",flankn/1e3,"kb"),"Start","End",paste0("+",flankn/1e3,"kb")))+ylim(0,1)#+
+#geom_text(data = chm13.ovl %>% 
+#              ungroup() %>%
+#              dplyr::select(Gene.Name,region) %>%
+#              distinct() %>%
+#              group_by(region,Gene.Name) %>%
+#              summarise(n_genes=n()) %>%
+#              distinct() %>%
+#              mutate(height=case_when(region == "CEN" ~ 0, 
+#                          region == "NONCEN" ~ .02, 
+#                          TRUE ~ .04)),
+#            aes(x=c(2),
+#                y=.8+height,
+#                label=paste("# repeats =",comma(n_genes))
+#                ), hjust=1)+facet_wrap(~name)+coord_cartesian(ylim=c(0,1))
+p
+```
+
+
